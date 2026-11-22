@@ -95,7 +95,7 @@ scene.add(stars);
 function setNight() {
   night = true;
   // wet night streets: glossy asphalt with puddles mirroring the lights
-  ground.material.roughnessMap = puddleTex; ground.material.roughness = 1; ground.material.metalness = 0.15; ground.material.color.set(0x8a8a8a); ground.material.needsUpdate = true;
+  ground.material.roughnessMap = puddleTex; ground.material.roughness = 1; ground.material.metalness = 0.05; ground.material.color.set(0x5a5a5a); ground.material.envMapIntensity = 0.5; ground.material.needsUpdate = true;
   grade.uniforms.sat.value = 0.72; grade.uniforms.tint.value.set(1.1, 0.98, 0.82); grade.uniforms.shadowTint.value.set(0.85, 0.95, 1.15);
   su.rayleigh.value = 0.4; su.turbidity.value = 2;
   setSky(-6, 250);
