@@ -343,9 +343,42 @@ function textSprite(text, color = '#fff') {
 const colonel = makeHuman({ shirt: 0x5b6b4a, vest: 0x4b5a3a, head: 0x8a1c1c, tag: 'Col. Rathore' });
 colonel.position.copy(SPOTS.handler); colonel.rotation.y = Math.PI; scene.add(colonel);
 // pedestrians
+// Mumbai crowd: varied clothing (kurtas, sarees, shirts), skin tones, walking speeds. Count scales with graphics quality.
 const peds = [];
-for (let i = 0; i < 22; i++) { const p = makeHuman({ shirt: [0xd8d0c0, 0x9a3b3b, 0x3b5a9a, 0xe0a040, 0x7a4a8a][i % 5], pants: 0x2a2a3a, vest: [0xd8d0c0, 0x9a3b3b, 0x3b5a9a][i % 3], head: 0x111111, gun: false });
-  p.position.set(rand(-180, 180), 0, [20, 60, 70, 110, 120, -130][i % 6] + rand(-3, 3)); p.userData.dir = Math.random() < 0.5 ? 1 : -1; scene.add(p); peds.push(p); }
+const CLOTH = [0xd8d0c0, 0x9a3b3b, 0x3b5a9a, 0xe0a040, 0x7a4a8a, 0xe86a9a, 0x2a8a6a, 0xf0f0f0, 0xc87a2a, 0x5a5a5a, 0xd04020, 0x30a0c0];
+const SKIN = [0x8d5a3b, 0x7a4a2e, 0xa06a48, 0x6a3e26, 0xb07a55];
+const PED_MAX = 90;
+for (let i = 0; i < PED_MAX; i++) {
+  const saree = Math.random() < 0.3, c = CLOTH[Math.floor(rand(0, CLOTH.length))];
+  const p = makeHuman({ shirt: c, pants: saree ? c : [0x2a2a3a, 0x4a3a2a, 0xd8d0c0, 0x222222][i % 4], vest: saree ? CLOTH[(i * 5) % CLOTH.length] : c, skin: SKIN[i % SKIN.length], head: 0x111111, gun: false });
+  p.scale.setScalar(rand(0.88, 1.06));
+  if (Math.random() < 0.3) { const bag = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.35, 0.15), M([0x3a2a1a, 0x7a1a1a, 0x1a1a5a][i % 3])); bag.position.set(0.3, 0.95, 0); p.add(bag); }
+  const alongX = Math.random() < 0.7;
+  if (alongX) p.position.set(rand(-190, 190), 0, [19, 21, 61, 69, 111, 119, -128, -135][i % 8] + rand(-1, 1));
+  else p.position.set([-175, -125, -75, -25, 25, 75, 125, 175][i % 8] + rand(-1.5, 1.5), 0, rand(-30, 250));
+  Object.assign(p.userData, { alongX, dir: Math.random() < 0.5 ? 1 : -1, speed: rand(1.1, 1.8), phase: rand(0, 6), stopT: 0 });
+  scene.add(p); peds.push(p);
+}
+// Mumbai Police (khaki) + ambulances + onlookers at the red zone — appear after the alert
+const police = [];
+for (let i = 0; i < 10; i++) {
+  const cop = makeHuman({ shirt: 0xb59a62, pants: 0xb59a62, vest: 0x8a7448, head: 0x3a2a1a, tag: i === 0 ? 'Mumbai Police' : undefined });
+  cop.position.set(TAJ.x - 22 + i * 4.5 + rand(-1, 1), 0, TAJ.z + 39 + rand(-1, 1)); cop.rotation.y = Math.PI + rand(-0.4, 0.4);
+  redZoneProps.add(cop); police.push(cop);
+}
+for (let i = 0; i < 24; i++) { // onlookers behind barricades
+  const o = makeHuman({ shirt: CLOTH[i % CLOTH.length], pants: 0x2a2a3a, vest: CLOTH[(i * 3) % CLOTH.length], skin: SKIN[i % 5], head: 0x111111, gun: false });
+  o.position.set(TAJ.x - 30 + rand(0, 60), 0, TAJ.z + 47 + rand(0, 6)); o.rotation.y = Math.PI + rand(-0.5, 0.5); o.userData.watch = true; redZoneProps.add(o); police.push(o);
+}
+const ambLights = [];
+for (const ax of [-28, 26]) {
+  const amb = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.3, 2.4, 5.5), M(0xf4f4f4, { roughness: 0.4 })); body.position.y = 1.5; amb.add(body);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.32, 0.3, 5.52), M(0xcc1111)); stripe.position.y = 1.4; amb.add(stripe);
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.2, 0.4), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xff2020, emissiveIntensity: 4 })); bar.position.set(0, 2.85, 1.8); amb.add(bar); ambLights.push(bar);
+  amb.position.set(TAJ.x + ax, 0, TAJ.z + 44); amb.rotation.y = 0.3 * Math.sign(ax); amb.traverse(o => o.castShadow = true); redZoneProps.add(amb);
+}
+let pedLimit = PED_MAX;
 
 // ============================================================ TAJ INTERIOR (assault map)
 const IN = { x: 1000, z: 0 }; // interior origin, far from the city
@@ -465,7 +498,7 @@ const WEAPONS = {
 };
 const me = {
   pos: SPOTS.spawn.clone(), vel: new THREE.Vector3(), yaw: Math.PI, pitch: 0, hp: 100, down: false, dead: false,
-  weapon: 'm4', ammo: 30, reserve: 210, nades: 3, lastShot: 0, reloading: 0, lastHurt: 0, onGround: true,
+  weapon: 'm4', ammo: 30, reserve: 210, inv: { frag: 3, flash: 2, smoke: 2 }, lastShot: 0, reloading: 0, lastHurt: 0, onGround: true,
   name: 'Commando', inZone: false, aim: false,
 };
 let phase = 'menu'; // menu → toHandler → talk → toHome → rest → toRed → brief → loadout → assault → end
@@ -526,7 +559,7 @@ function onNet(m) {
     case 'pdmg': hurt(m.d); break;
     case 'shot': tracer(new THREE.Vector3(...m.a), new THREE.Vector3(...m.b), m.c || 0xffd080); sfx(m.s || 'shot', new THREE.Vector3(...m.a), 0.8); if (net.host) alertNear(new THREE.Vector3(...m.a), 30); break;
     case 'boom': explosionFx(new THREE.Vector3(...m.p), m.r); applyBlast(new THREE.Vector3(...m.p), m.r, m.d, false); break;
-    case 'nade': throwNade(new THREE.Vector3(...m.p), new THREE.Vector3(...m.v), false); break;
+    case 'nade': throwNade(new THREE.Vector3(...m.p), new THREE.Vector3(...m.v), false, m.k || 'frag'); break;
     case 'brief': startBrief(); break;
     case 'hostage': setHostage(m.id, m.s, false); break;
     case 'revive': if (me.down && !me.dead) { me.down = false; me.hp = 35; toast(`${p ? p.name : 'Teammate'} revived you!`); } break;
@@ -586,7 +619,7 @@ const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3();
 function lineOfSight(a, b) {
   tmpV.subVectors(b, a); const d = tmpV.length(); tmpV.normalize();
   ray.set(a, tmpV); ray.far = d - 0.4;
-  return ray.intersectObjects(solids, false).length === 0;
+  return ray.intersectObjects(solids, false).length === 0 && !smokeBlocks(a, b);
 }
 function damageEnemy(id, dmg, headshot, by) {
   const e = enemies[id]; if (!e || !e.alive) return;
@@ -640,6 +673,7 @@ function updateEnemiesHost(dt) {
       if (e.armed > 0) { e.armed -= dt; if (Math.floor(e.armed * 8) % 2 === 0) sfx('beep', m.position, 0.9); if (e.armed <= 0) { e.armed = -2; const p = m.position.clone().setY(1); explosionFx(p, 9); applyBlast(p, 9, 140); nsend({ t: 'boom', p: p.toArray(), r: 9, d: 140 }); m.visible = false; } }
       continue;
     }
+    if (e.stun > 0) { e.stun -= dt; m.rotation.y += dt * 2; e.seen = 0; continue; } // flashbanged
     // find visible target
     let best = null, bd = 1e9;
     const eye = m.position.clone().setY(1.6);
@@ -675,6 +709,12 @@ function updateEnemiesHost(dt) {
       }
     } else {
       e.seen = Math.max(0, e.seen - dt);
+      // squad is hiding behind cover → flush them out with a grenade
+      e.nadeT = (e.nadeT ?? rand(6, 12)) - dt;
+      if (e.type === 'rifle' && e.alert && e.lastSeen && e.nadeT <= 0 && e.lastSeen.distanceTo(m.position) < 22 && e.lastSeen.distanceTo(m.position) > 5) {
+        e.nadeT = rand(12, 20); const T = 1.1, from = m.position.clone().setY(1.6), tgt = e.lastSeen.clone().add(new THREE.Vector3(rand(-1.5, 1.5), 0, rand(-1.5, 1.5)));
+        const v = tgt.sub(from).divideScalar(T); v.y += 0.5 * 14 * T; throwNade(from, v, true, 'efrag'); toast('GRENADE! — MOVE!', '#f33');
+      }
       if (e.type !== 'boss') {
         if (e.alert && e.lastSeen && e.lastSeen.distanceTo(m.position) > 2) {
           const dir = e.lastSeen.clone().sub(m.position).setY(0).normalize();
@@ -746,10 +786,36 @@ function reload() {
   me.reloading = me.weapon === 'sn' ? 3 : me.weapon === 'sg' ? 2.6 : 2.1; sfx('reload');
 }
 const nades = [];
-function throwNade(p, v, mine = true) {
-  const m = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), M(0x2c3a24, { metalness: 0.3 })); m.position.copy(p); scene.add(m);
-  nades.push({ m, v: v.clone(), t: 2.4, mine });
-  if (mine) nsend({ t: 'nade', p: p.toArray(), v: v.toArray() });
+// kinds: frag (damage) · flash (blinds/stuns) · smoke (blocks line of sight) · efrag (thrown by terrorists)
+const NADE_COLOR = { frag: 0x2c3a24, flash: 0x9a9a9a, smoke: 0x3a5a7a, efrag: 0x4a2a1a };
+function throwNade(p, v, mine = true, kind = 'frag') {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.16, 10), M(NADE_COLOR[kind], { metalness: 0.4, roughness: 0.4 })); m.position.copy(p); scene.add(m);
+  if (kind === 'efrag') { const led = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), new THREE.MeshBasicMaterial({ color: 0xff2020 })); led.position.y = 0.1; m.add(led); }
+  nades.push({ m, v: v.clone(), t: kind === 'flash' ? 1.6 : kind === 'efrag' ? 2.2 : 2.4, mine, kind });
+  if (mine) nsend({ t: 'nade', p: p.toArray(), v: v.toArray(), k: kind });
+}
+const smokes = []; // {p, r, t}
+function detonate(kind, bp) {
+  if (kind === 'frag' || kind === 'efrag') { explosionFx(bp, 8); applyBlast(bp, 8, kind === 'efrag' ? 110 : 220); if (net.host) alertNear(bp, 30); return; }
+  if (kind === 'flash') {
+    sfx('boom', bp, 0.6); spark(bp, 0xffffff, 30); shake = Math.max(shake, 0.3);
+    const fl = new THREE.PointLight(0xffffff, 900, 30, 1.5); fl.position.copy(bp).y += 1; scene.add(fl); fx.push({ o: fl, life: 0.25, max: 0.25, light: 900 });
+    // blind local player if close and looking at it
+    const eye = camera.getWorldPosition(new THREE.Vector3()), to = bp.clone().sub(eye), d = to.length();
+    const facing = to.normalize().dot(new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion));
+    if (inside && d < 14 && lineOfSight(bp.clone().setY(0.6), eye)) { const a = clamp((1 - d / 14) * (facing > 0.3 ? 1.3 : 0.5), 0, 1); const f = $('flashbang'); f.style.transition = 'none'; f.style.opacity = a; setTimeout(() => { f.style.transition = 'opacity 3.5s'; f.style.opacity = 0; }, 900); }
+    if (net.host) for (const e of enemies) if (e.alive && e.model.position.distanceTo(bp) < 12 && lineOfSight(bp.clone().setY(0.6), e.model.position.clone().setY(1.6))) { e.stun = e.type === 'boss' ? 2.5 : 4.5; e.alert = true; }
+    return;
+  }
+  if (kind === 'smoke') {
+    sfx('reload', bp, 1); const g = new THREE.Group(); scene.add(g);
+    for (let i = 0; i < 26; i++) { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTex, color: 0xb8bcc0, transparent: true, opacity: 0, depthWrite: false })); sp.position.copy(bp).add(new THREE.Vector3(rand(-3.5, 3.5), rand(0.3, 3.2), rand(-3.5, 3.5))); sp.scale.setScalar(rand(4, 6.5)); sp.userData.o = rand(0.45, 0.75); g.add(sp); }
+    smokes.push({ p: bp.clone().setY(1.5), r: 4.5, t: 16, g });
+  }
+}
+function smokeBlocks(a, b) { // does any smoke cloud sit between a and b?
+  for (const s of smokes) { if (s.t < 1) continue; const ab = tmpV2.subVectors(b, a); const tt = clamp(s.p.clone().sub(a).dot(ab) / ab.lengthSq(), 0, 1); if (a.clone().addScaledVector(ab, tt).distanceTo(s.p) < s.r) return true; }
+  return false;
 }
 function hurt(d) {
   if (me.down || me.dead || phase !== 'assault') return;
@@ -856,7 +922,7 @@ function openLoadout() {
 }
 $('deploy').onclick = () => {
   $('loadout').classList.remove('show');
-  const w = WEAPONS[me.weapon]; me.ammo = w.mag; me.reserve = w.reserve; me.nades = 3; me.hp = 100;
+  const w = WEAPONS[me.weapon]; me.ammo = w.mag; me.reserve = w.reserve; me.inv = { frag: 3, flash: 2, smoke: 2 }; me.hp = 100;
   buildViewGun(me.weapon);
   enterInterior();
   renderer.domElement.requestPointerLock();
@@ -913,9 +979,10 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyE' && dialogQ) nextDialog();
   if (e.code === 'KeyR') reload();
   if (e.code === 'Digit1') $('phone').classList.toggle('up');
-  if (e.code === 'KeyG' && phase === 'assault' && me.nades > 0 && !me.down) {
-    me.nades--; const dir = new THREE.Vector3(0, 0.25, -1).applyQuaternion(camera.quaternion).normalize();
-    throwNade(camera.getWorldPosition(new THREE.Vector3()).addScaledVector(dir, 0.6), dir.multiplyScalar(16));
+  const nk = { KeyG: 'frag', KeyF: 'flash', KeyT: 'smoke' }[e.code];
+  if (nk && phase === 'assault' && me.inv[nk] > 0 && !me.down) {
+    me.inv[nk]--; const dir = new THREE.Vector3(0, 0.25, -1).applyQuaternion(camera.quaternion).normalize();
+    throwNade(camera.getWorldPosition(new THREE.Vector3()).addScaledVector(dir, 0.6), dir.multiplyScalar(nk === 'smoke' ? 12 : 16), true, nk);
   }
   if (e.code === 'Tab') e.preventDefault();
 });
@@ -956,6 +1023,7 @@ function applyQuality(q) {
   renderer.setPixelRatio(Math.min(devicePixelRatio, Q.pr)); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
   renderer.shadowMap.enabled = Q.shadows;
   sunLight.shadow.mapSize.set(Q.shadowMap, Q.shadowMap); if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; }
+  pedLimit = { low: 30, medium: 55, high: 80, ultra: 90 }[q];
   bloom.enabled = Q.bloom; ssao.enabled = Q.ao; composer.renderTarget1.samples = composer.renderTarget2.samples = Q.msaa;
   scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => m.needsUpdate = true); });
 }
@@ -1052,12 +1120,33 @@ function loop() {
     const n = nades[i]; n.v.y -= 14 * dt; const prev = n.m.position.clone(); n.m.position.addScaledVector(n.v, dt);
     if (n.m.position.y < 0.09) { n.m.position.y = 0.09; n.v.y *= -0.35; n.v.x *= 0.6; n.v.z *= 0.6; }
     const p = n.m.position.clone(); collide(p, 0.1); if (p.x !== n.m.position.x || p.z !== n.m.position.z) { n.v.x *= -0.4; n.v.z *= -0.4; n.m.position.copy(prev); }
-    n.t -= dt; if (n.t <= 0) { const bp = n.m.position.clone(); scene.remove(n.m); nades.splice(i, 1); explosionFx(bp, 8); applyBlast(bp, 8, 220); if (net.host) alertNear(bp, 30); }
+    if (n.kind === 'efrag' && Math.floor(n.t * 6) % 2 === 0) sfx('beep', n.m.position, 0.6);
+    n.t -= dt; if (n.t <= 0) { const bp = n.m.position.clone(); scene.remove(n.m); nades.splice(i, 1); detonate(n.kind, bp); }
   }
+  for (let i = smokes.length - 1; i >= 0; i--) { const s = smokes[i]; s.t -= dt; const k = s.t > 14 ? (16 - s.t) / 2 : s.t < 3 ? s.t / 3 : 1; s.g.children.forEach((sp, j) => { sp.material.opacity = sp.userData.o * k; sp.position.y += Math.sin(t + j) * 0.002; sp.material.rotation += dt * 0.05; }); if (s.t <= 0) { scene.remove(s.g); smokes.splice(i, 1); } }
 
   // --- world animation
   for (const c of movingCars) { c.g.position.x += c.dir * c.speed * dt; if (c.g.position.x > 230) c.g.position.x = -230; if (c.g.position.x < -230) c.g.position.x = 230; }
-  for (const p of peds) { const sp = p.userData.panic ? 5 : 1.4; p.position.x += p.userData.dir * sp * dt; p.rotation.y = p.userData.dir > 0 ? Math.PI / 2 : -Math.PI / 2; if (Math.abs(p.position.x) > 200) p.userData.dir *= -1; const s = Math.sin(t * sp * 3 + p.id) * 0.5; p.userData.legL.rotation.x = s; p.userData.legR.rotation.x = -s; }
+  if (!inside) for (let i = 0; i < peds.length; i++) {
+    const p = peds[i], u = p.userData;
+    const far = p.position.distanceToSquared(me.pos) > 160 * 160;
+    p.visible = i < pedLimit && !far; if (!p.visible) continue;
+    // panic: run away from the Taj; calm: stroll, and stop/look when the player bumps into them
+    let sp = u.panic ? u.speed * 3.6 : u.speed;
+    const dp = p.position.distanceTo(me.pos);
+    if (!u.panic && dp < 1.6) u.stopT = 1.5;
+    if (u.stopT > 0) { u.stopT -= dt; sp = 0; p.lookAt(me.pos.x, 0, me.pos.z); }
+    else {
+      if (u.panic && u.alongX) u.dir = p.position.x > TAJ.x ? 1 : -1;
+      if (u.panic && !u.alongX) u.dir = 1;
+      if (u.alongX) { p.position.x += u.dir * sp * dt; p.rotation.y = u.dir > 0 ? Math.PI / 2 : -Math.PI / 2; if (Math.abs(p.position.x) > 200) { u.dir *= -1; if (u.panic) p.position.x = clamp(p.position.x, -200, 200); } }
+      else { p.position.z += u.dir * sp * dt; p.rotation.y = u.dir > 0 ? 0 : Math.PI; if (p.position.z > 255 || p.position.z < -35) u.dir *= -1; }
+    }
+    const sw = Math.sin(t * sp * 3.2 + u.phase) * (sp > 0 ? 0.55 : 0);
+    u.legL.rotation.x = sw; u.legR.rotation.x = -sw;
+    u.armL.rotation.x = u.panic ? -2.6 : -sw * 0.6; u.armR.rotation.x = u.panic ? -2.6 : sw * 0.6; // hands up while fleeing
+  }
+  if (redZoneProps.visible) { ambLights.forEach(b => b.material.emissiveIntensity = Math.sin(t * 12) > 0 ? 6 : 0.2); for (const o of police) if (o.userData.watch) o.position.y = Math.abs(Math.sin(t * 2 + o.id)) * 0.04; }
   boats.forEach((b, i) => { b.position.y = Math.sin(t + i) * 0.15; b.rotation.z = Math.sin(t * 0.8 + i) * 0.04; });
   marker.children[0].material.opacity = 0.18 + Math.sin(t * 3) * 0.06; marker.rotation.y += dt;
   if (redZoneProps.visible) { siren.intensity = Math.sin(t * 10) > 0 ? 60 : 0; siren2.intensity = Math.sin(t * 10) > 0 ? 0 : 60; tajFireLight.intensity = 180 + Math.random() * 80; }
@@ -1100,7 +1189,7 @@ function loop() {
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('msg').textContent = ''; }
   $('hp').style.width = me.hp + '%';
   $('hpbar').style.display = $('stats').style.display = phase === 'assault' ? 'block' : 'none';
-  if (phase === 'assault') $('stats').innerHTML = `${WEAPONS[me.weapon].name}<br><span style="font-size:40px">${me.reloading > 0 ? 'RELOADING' : me.ammo}</span> / ${me.reserve}<br><span style="font-size:18px">Grenades: ${me.nades}</span>`;
+  if (phase === 'assault') $('stats').innerHTML = `${WEAPONS[me.weapon].name}<br><span style="font-size:40px">${me.reloading > 0 ? 'RELOADING' : me.ammo}</span> / ${me.reserve}<br><span style="font-size:18px">G Frag ${me.inv.frag} · F Flash ${me.inv.flash} · T Smoke ${me.inv.smoke}</span>`;
   const team = [...net.peers.values()];
   $('team').style.display = team.length || keys.Tab ? 'block' : 'none';
   $('team').innerHTML = `<b>SQUAD ${net.online ? '(online)' : ''}</b><br>${me.name} (you) — ${me.down ? 'DOWN' : Math.round(me.hp) + ' HP'}` + team.map(p => `<br>${p.name} — ${p.dead ? 'KIA' : p.down ? 'DOWN' : p.hp + ' HP'}`).join('');
