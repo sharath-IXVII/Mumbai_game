@@ -90,7 +90,7 @@ function dressModel(group, { civilian, tint, gun }) {
   const src = civilian ? MODELS.civilian : MODELS.soldier; if (!src) return;
   const model = SkeletonUtils.clone(src.scene); model.scale.multiplyScalar(src.scale);
   model.traverse(o => {
-    if (o.isMesh) { o.material = o.material.clone(); if (tint) o.material.color.multiply(new THREE.Color(tint)); o.raycast = () => { }; }
+    if (o.isMesh) { o.material = o.material.clone(); o.material.userData.base = o.material.color.clone(); if (tint) o.material.color.multiply(new THREE.Color(tint)); o.raycast = () => { }; }
   });
   group.add(model);
   // hide the simple figure, but keep it as an invisible hit-box for bullets
@@ -108,6 +108,7 @@ function dressModel(group, { civilian, tint, gun }) {
   const actions = { idle: mixer.clipAction(clips.idle), walk: mixer.clipAction(clips.walk), run: mixer.clipAction(clips.run) };
   actions.idle.play(); mixer.update(Math.random() * 3);
   const rec = { group, mixer, actions, cur: 'idle', last: new THREE.Vector3(), model };
+  group.userData.model = model;
   group.userData.anim = rec; animated.push(rec);
 }
 function updateAnimations(dt) {
@@ -122,6 +123,31 @@ function updateAnimations(dt) {
   }
 }
 const tmpA = new THREE.Vector3();
+
+// ---- squad outfits: undercover in the city, NSG "Black Cat" tactical gear inside the Taj
+const OUTFITS = { undercover: 0x3a3f4a, tactical: 0x2a2a2c };
+function setOutfit(group, outfit) {
+  const model = group.userData.model; if (!model || group.userData.outfit === outfit) return;
+  group.userData.outfit = outfit;
+  model.traverse(o => { if (o.isMesh && o.material.userData.base) o.material.color.copy(o.material.userData.base).multiply(new THREE.Color(OUTFITS[outfit])); });
+  const head = model.getObjectByName('mixamorigHead'); if (!head) return;
+  if (!group.userData.gear) {
+    model.updateMatrixWorld(true); const ws = head.getWorldScale(new THREE.Vector3()).x, u = 1 / ws;
+    const gear = { undercover: new THREE.Group(), tactical: new THREE.Group() };
+    // undercover: dark baseball cap, sunglasses, earpiece
+    const capM = M(0x1a1c22, { roughness: 0.8 });
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.115 * u, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), capM); cap.position.y = 0.12 * u; gear.undercover.add(cap);
+    const visor = new THREE.Mesh(new THREE.CylinderGeometry(0.09 * u, 0.09 * u, 0.012 * u, 16, 1, false, -Math.PI / 2, Math.PI), capM); visor.position.set(0, 0.125 * u, 0.07 * u); gear.undercover.add(visor);
+    const shades = new THREE.Mesh(new THREE.BoxGeometry(0.15 * u, 0.035 * u, 0.02 * u), new THREE.MeshPhysicalMaterial({ color: 0x050505, roughness: 0.05, metalness: 0.6, clearcoat: 1 })); shades.position.set(0, 0.075 * u, 0.1 * u); gear.undercover.add(shades);
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.012 * u, 8, 6), M(0x111111)); ear.position.set(0.085 * u, 0.06 * u, 0.01 * u); gear.undercover.add(ear);
+    // tactical: black helmet with NVG mount, balaclava look
+    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.13 * u, 18, 10, 0, Math.PI * 2, 0, Math.PI / 1.8), M(0x15161a, { roughness: 0.6 })); helmet.position.y = 0.1 * u; gear.tactical.add(helmet);
+    const nvg = new THREE.Mesh(new THREE.BoxGeometry(0.05 * u, 0.04 * u, 0.05 * u), M(0x0a0a0a, { metalness: 0.5 })); nvg.position.set(0, 0.17 * u, 0.12 * u); gear.tactical.add(nvg);
+    head.add(gear.undercover, gear.tactical); group.userData.gear = gear;
+  }
+  group.userData.gear.undercover.visible = outfit === 'undercover';
+  group.userData.gear.tactical.visible = outfit === 'tactical';
+}
 
 // ============================================================ SKY / LIGHT
 const sky = new Sky(); sky.scale.setScalar(4000); scene.add(sky);
@@ -878,7 +904,7 @@ function connect(room, name) {
 }
 function addPeer(id, name) {
   if (net.peers.has(id)) return;
-  const model = makeHuman({ shirt: 0x2b3523, vest: 0x1c241a, head: 0x111111, tag: name, modelTint: 0x9aa890 });
+  const model = makeHuman({ shirt: 0x2b3523, vest: 0x1c241a, head: 0x111111, tag: name, gun: false, uniform: true }); setOutfit(model, 'undercover');
   model.visible = false; scene.add(model);
   net.peers.set(id, { id, name, model, pos: new THREE.Vector3(), target: new THREE.Vector3(), yaw: 0, hp: 100, down: false, dead: false, phase: 'menu', inZone: false, t: 0 });
   toast(`${name} joined the squad`);
@@ -1417,7 +1443,7 @@ async function begin(online) {
   $('menu').classList.remove('show');
   if (online) { const ok = await connect($('room').value || 'TAJ', me.name); if (!ok) toast('Could not reach the squad server — playing solo', '#fa0'); }
   buildViewGun('m4'); viewGun.visible = false;
-  meModel = makeHuman({ shirt: 0x2b3523, vest: 0x1c241a, head: 0x111111, gun: false, uniform: true, modelTint: 0x9aa890 }); scene.add(meModel);
+  meModel = makeHuman({ shirt: 0x2b3523, vest: 0x1c241a, head: 0x111111, gun: false, uniform: true }); setOutfit(meModel, 'undercover'); scene.add(meModel);
   startStory(); renderer.domElement.requestPointerLock();
   if (location.hash === '#tajday') { me.pos.set(SPOTS.red.x + 30, 0, SPOTS.red.z + 32); me.yaw = 0.35; me.pitch = 0.3; }
   if (location.hash === '#colonel') { me.pos.set(SPOTS.handler.x, 0, SPOTS.handler.z + 7); me.yaw = 0; me.pitch = -0.05; }
@@ -1573,7 +1599,7 @@ function loop() {
   for (const p of net.peers.values()) {
     p.pos.lerp(p.target, Math.min(1, dt * 10));
     p.model.position.copy(p.pos); p.model.rotation.y = p.yaw + Math.PI;
-    p.model.visible = !!p.inside === inside && !p.dead;
+    p.model.visible = !!p.inside === inside && !p.dead; setOutfit(p.model, p.inside ? 'tactical' : 'undercover');
     p.model.rotation.x = p.down ? -Math.PI / 2.3 : 0; p.model.position.y = p.pos.y + (p.down ? 0.3 : 0);
   }
 
