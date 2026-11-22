@@ -74,7 +74,6 @@ try {
     const box = new THREE.Box3();
     g.scene.traverse(o => { if (o.isSkinnedMesh) { o.skeleton.update(); o.computeBoundingBox(); box.union(o.boundingBox.clone().applyMatrix4(o.matrixWorld)); } });
     hgt = box.isEmpty() ? (top ? top.getWorldPosition(v).y : 1.76) : box.max.y - box.min.y;
-    console.info('model height', hgt);
     return 1.76 / hgt;
   };
   MODELS.soldier = { scene: sol.scene, scale: norm(sol) };
@@ -89,7 +88,7 @@ try {
 const animated = []; // {group, mixer, actions, cur, last}
 function dressModel(group, { civilian, tint, gun }) {
   const src = civilian ? MODELS.civilian : MODELS.soldier; if (!src) return;
-  const model = SkeletonUtils.clone(src.scene); model.scale.setScalar(src.scale);
+  const model = SkeletonUtils.clone(src.scene); model.scale.multiplyScalar(src.scale);
   model.traverse(o => {
     if (o.isMesh) { o.material = o.material.clone(); if (tint) o.material.color.multiply(new THREE.Color(tint)); o.raycast = () => { }; }
   });
