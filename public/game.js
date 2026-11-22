@@ -1291,7 +1291,7 @@ async function begin(online) {
   if (online) { const ok = await connect($('room').value || 'TAJ', me.name); if (!ok) toast('Could not reach the squad server — playing solo', '#fa0'); }
   buildViewGun('m4'); viewGun.visible = false;
   startStory(); renderer.domElement.requestPointerLock();
-  if (location.hash === '#tajday') { me.pos.set(SPOTS.red.x + 5, 0, SPOTS.red.z + 75); me.yaw = 0.05; me.pitch = 0.22; }
+  if (location.hash === '#tajday') { me.pos.set(SPOTS.red.x + 30, 0, SPOTS.red.z + 32); me.yaw = 0.35; me.pitch = 0.3; }
   if (location.hash === '#colonel') { me.pos.set(SPOTS.handler.x, 0, SPOTS.handler.z + 7); me.yaw = 0; me.pitch = -0.05; }
   if (location.hash === '#taj' || location.hash === '#assault') { // dev shortcuts
     setNight(); fireGroup.visible = true; tajFireLight.intensity = 400; redZoneProps.visible = true; marker.visible = false;
