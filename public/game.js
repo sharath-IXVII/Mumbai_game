@@ -71,7 +71,10 @@ try {
     g.scene.updateMatrixWorld(true);
     const top = g.scene.getObjectByName('mixamorigHeadTop_End'), head = g.scene.getObjectByName('mixamorigHead');
     const v = new THREE.Vector3(); let hgt;
-    if (top) hgt = top.getWorldPosition(v).y; else if (head) hgt = head.getWorldPosition(v).y * 1.1; else { const b = new THREE.Box3().setFromObject(g.scene); hgt = b.max.y - b.min.y; }
+    const box = new THREE.Box3();
+    g.scene.traverse(o => { if (o.isSkinnedMesh) { o.skeleton.update(); o.computeBoundingBox(); box.union(o.boundingBox.clone().applyMatrix4(o.matrixWorld)); } });
+    hgt = box.isEmpty() ? (top ? top.getWorldPosition(v).y : 1.76) : box.max.y - box.min.y;
+    console.info('model height', hgt);
     return 1.76 / hgt;
   };
   MODELS.soldier = { scene: sol.scene, scale: norm(sol) };
