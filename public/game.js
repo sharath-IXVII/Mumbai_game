@@ -67,7 +67,13 @@ try {
   $('menuStatus') && ($('menuStatus').textContent = 'Loading characters…');
   const loader = new GLTFLoader();
   const [sol, civ] = await Promise.all([loader.loadAsync('assets/Soldier.glb'), loader.loadAsync('assets/Michelle.glb')]);
-  const norm = (g) => { const b = new THREE.Box3().setFromObject(g.scene); return 1.78 / (b.max.y - b.min.y); };
+  const norm = (g) => { // measure height from the skeleton (bounding boxes of skinned meshes are unreliable)
+    g.scene.updateMatrixWorld(true);
+    const top = g.scene.getObjectByName('mixamorigHeadTop_End'), head = g.scene.getObjectByName('mixamorigHead');
+    const v = new THREE.Vector3(); let hgt;
+    if (top) hgt = top.getWorldPosition(v).y; else if (head) hgt = head.getWorldPosition(v).y * 1.1; else { const b = new THREE.Box3().setFromObject(g.scene); hgt = b.max.y - b.min.y; }
+    return 1.76 / hgt;
+  };
   MODELS.soldier = { scene: sol.scene, scale: norm(sol) };
   MODELS.civilian = { scene: civ.scene, scale: norm(civ) };
   const clip = n => sol.animations.find(a => a.name === n);
