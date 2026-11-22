@@ -1142,9 +1142,9 @@ $('deploy').onclick = () => {
 function enterInterior() {
   inside = true; phase = 'assault';
   me.pos.set(IN.x - 3 + (net.id % 4) * 2, 0, IN.z - 22); me.yaw = Math.PI; me.pitch = 0;
-  sunLight.visible = false; hemi.intensity = 0.12; scene.fog.density = 0.02; scene.fog.color.set(0x140c08);
+  sunLight.visible = false; hemi.intensity = 0.35; hemi.color.set(0xffe8c8); hemi.groundColor.set(0x40302a); scene.fog.density = 0.02; scene.fog.color.set(0x140c08);
   interiorLights.forEach(l => l.visible = true); cityLights.forEach(l => l.visible = false); sky.visible = false; stars.visible = false;
-  scene.background = new THREE.Color(0x050302); renderer.toneMappingExposure = 0.55; bloom.threshold = 0.95; bloom.strength = 0.5;
+  scene.background = new THREE.Color(0x050302); renderer.toneMappingExposure = 0.8; bloom.threshold = 0.95; bloom.strength = 0.5;
   objective('Clear the Taj — 3 floors. Find and neutralise all 10 hostiles. Rescue hostages (E). Your plan.');
   toast('Operation Black Tornado is GO', '#ffd21f');
 }
