@@ -77,7 +77,7 @@ function setNight() {
   stars.material.opacity = 0.9;
   renderer.toneMappingExposure = 0.9;
   bloom.strength = 0.7; bloom.threshold = 0.9;
-  cityLights.forEach(l => l.visible = true);
+  cityLights.forEach(l => l.visible = Q.lights);
   windowMats.forEach(m => m.emissiveIntensity = 0.45);
 }
 
@@ -901,7 +901,43 @@ addEventListener('mousemove', e => {
   if (!locked) return; const s = me.aim && me.weapon === 'sn' ? 0.0005 : 0.0021;
   me.yaw -= e.movementX * s; me.pitch = clamp(me.pitch - e.movementY * s, -1.45, 1.45);
 });
+// ============================================================ GRAPHICS QUALITY (runs on any PC)
+const PRESETS = {
+  low:    { pr: 0.7,  shadows: false, shadowMap: 512,  bloom: false, lights: false },
+  medium: { pr: 1.0,  shadows: true,  shadowMap: 1024, bloom: true,  lights: true },
+  high:   { pr: 1.5,  shadows: true,  shadowMap: 2048, bloom: true,  lights: true },
+  ultra:  { pr: 2.0,  shadows: true,  shadowMap: 4096, bloom: true,  lights: true },
+};
+let quality = 'high', Q = PRESETS.high;
+function detectQuality() {
+  const mobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+  const cores = navigator.hardwareConcurrency || 4, mem = navigator.deviceMemory || 4;
+  let gpu = '';
+  try { const gl = renderer.getContext(); const ext = gl.getExtension('WEBGL_debug_renderer_info'); gpu = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : ''; } catch { }
+  if (/RTX|RX 6|RX 7|Apple M[2-9]/i.test(gpu)) return 'ultra';
+  if (mobile || /Intel|Mali|Adreno|SwiftShader|llvmpipe/i.test(gpu) || cores <= 4 || mem <= 4) return 'low';
+  if (/GTX|Radeon|Apple M1/i.test(gpu)) return 'high';
+  return 'medium';
+}
+function applyQuality(q) {
+  quality = q; Q = PRESETS[q];
+  renderer.setPixelRatio(Math.min(devicePixelRatio, Q.pr)); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = Q.shadows;
+  sunLight.shadow.mapSize.set(Q.shadowMap, Q.shadowMap); if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; }
+  bloom.enabled = Q.bloom;
+  scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => m.needsUpdate = true); });
+}
+// Auto-lower quality if the game runs slowly (like GTA's dynamic settings)
+let fpsFrames = 0, fpsTime = 0, slowSecs = 0;
+function watchFps(dt) {
+  fpsFrames++; fpsTime += dt; if (fpsTime < 1) return;
+  const fps = fpsFrames / fpsTime; fpsFrames = 0; fpsTime = 0;
+  slowSecs = fps < 28 ? slowSecs + 1 : 0;
+  if (slowSecs >= 4 && quality !== 'low' && phase !== 'menu') { const order = ['low', 'medium', 'high', 'ultra']; applyQuality(order[order.indexOf(quality) - 1]); toast(`Graphics lowered to ${quality.toUpperCase()} for smoother play`, '#aaf'); slowSecs = 0; }
+}
+
 async function begin(online) {
+  const qs = $('quality').value; applyQuality(qs === 'auto' ? detectQuality() : qs);
   audio();
   me.name = ($('name').value || 'Commando').trim();
   $('menu').classList.remove('show');
@@ -1040,6 +1076,7 @@ function loop() {
   if (phase !== 'menu') drawMinimap();
 
   if (phase === 'menu') { camera.position.set(80 + Math.sin(t * 0.05) * 60, 30, 40); camera.lookAt(TAJ.x, 25, TAJ.z); }
+  watchFps(dt);
   composer.render();
 }
 loop();
