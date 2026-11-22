@@ -126,7 +126,7 @@ function updateAnimations(dt) {
 const tmpA = new THREE.Vector3();
 
 // ---- squad outfits: undercover in the city, NSG "Black Cat" tactical gear inside the Taj
-const OUTFITS = { undercover: 0x3a3f4a, tactical: 0x2a2a2c };
+const OUTFITS = { casual: 0xb8c8e0, undercover: 0x3a3f4a, tactical: 0x2a2a2c };
 function setOutfit(group, outfit) {
   const model = group.userData.model; if (!model || group.userData.outfit === outfit) return;
   group.userData.outfit = outfit;
@@ -902,7 +902,7 @@ const WEAPONS = {
 const me = {
   pos: SPOTS.spawn.clone(), vel: new THREE.Vector3(), yaw: Math.PI, pitch: 0, hp: 100, down: false, dead: false,
   weapon: 'm4', ammo: 30, reserve: 210, inv: { frag: 3, flash: 2, smoke: 2 }, lastShot: 0, reloading: 0, lastHurt: 0, onGround: true,
-  name: 'Commando', inZone: false, aim: false,
+  name: 'Commando', inZone: false, aim: false, outfit: 'casual',
 };
 let phase = 'menu'; // menu → toHandler → talk → toHome → rest → toRed → brief → loadout → assault → end
 let inside = false;
@@ -945,7 +945,7 @@ function connect(room, name) {
 }
 function addPeer(id, name) {
   if (net.peers.has(id)) return;
-  const model = makeHuman({ shirt: 0x2b3523, vest: 0x1c241a, head: 0x111111, tag: name, gun: false, uniform: true }); setOutfit(model, 'undercover');
+  const model = makeHuman({ shirt: 0x2b3523, vest: 0x1c241a, head: 0x111111, tag: name, gun: false, uniform: true }); setOutfit(model, 'casual');
   model.visible = false; scene.add(model);
   net.peers.set(id, { id, name, model, pos: new THREE.Vector3(), target: new THREE.Vector3(), yaw: 0, hp: 100, down: false, dead: false, phase: 'menu', inZone: false, t: 0 });
   toast(`${name} joined the squad`);
@@ -956,7 +956,7 @@ function onNet(m) {
     case 'peerJoin': addPeer(m.id, m.name); break;
     case 'peerLeave': { const q = net.peers.get(m.id); if (q) { scene.remove(q.model); net.peers.delete(m.id); toast(`${q.name} disconnected`); } break; }
     case 'host': net.host = true; toast('You are now the squad host'); break;
-    case 's': if (p) { p.target.fromArray(m.p); p.yaw = m.ry; p.hp = m.hp; p.down = m.down; p.dead = m.dead; p.phase = m.ph; p.inZone = m.z; p.inside = m.in; p.t = performance.now(); } break;
+    case 's': if (p) { p.target.fromArray(m.p); p.yaw = m.ry; p.hp = m.hp; p.down = m.down; p.dead = m.dead; p.phase = m.ph; p.inZone = m.z; p.inside = m.in; p.outfit = m.o; p.t = performance.now(); } break;
     case 'e': if (!net.host) applyEnemySnapshot(m.l); break;
     case 'hit': if (net.host) damageEnemy(m.id, m.d, m.hs, m.from); break;
     case 'pdmg': hurt(m.d); break;
@@ -1273,11 +1273,23 @@ function storyUpdate(dt) {
       objective('Rest at the safehouse…');
       setTimeout(() => {
         let n = 0; const ring = setInterval(() => { sfx('phone'); if (++n > 5) clearInterval(ring); }, 400);
-        phoneUp('⚠ FLASH — CODE RED\nMultiple terror attacks across South Mumbai. Gunmen inside the Taj Mahal Palace hotel. Guests trapped. Fire in the heritage wing.\n\nReport to the RED ZONE outside the Taj immediately.', 9000);
+        phoneUp('⚠ FLASH — CODE RED\nMultiple terror attacks across South Mumbai. Gunmen inside the Taj Mahal Palace hotel. Guests trapped. Fire in the heritage wing.', 0);
         fireGroup.visible = true; tajFireLight.intensity = 400; redZoneProps.visible = true;
-        phase = 'toRed'; redMarker.position.copy(SPOTS.red); redMarker.visible = true;
-        objective('EMERGENCY: Get to the red zone at the Taj Hotel');
         peds.forEach(p => p.userData.panic = true);
+        objective('Incoming message…');
+        setTimeout(() => { // the Colonel orders the squad to gear up
+          sfx('phone'); phoneUp('Col. Rathore:\n"This is it. Your tactical kit is in the safehouse locker. Suit up NOW — full gear, black.\nThen get to the red zone at the Taj. Move!"', 0);
+          setTimeout(() => {
+            $('phone').classList.remove('up');
+            const c2 = $('cine'); c2.classList.add('show'); $('cinetext').textContent = 'Suiting up — NSG tactical kit'; $('cinetext').classList.add('on');
+            setTimeout(() => {
+              me.outfit = 'tactical'; if (meModel) setOutfit(meModel, 'tactical');
+              c2.classList.remove('show'); $('cinetext').classList.remove('on');
+              phase = 'toRed'; redMarker.position.copy(SPOTS.red); redMarker.visible = true;
+              objective('EMERGENCY: Get to the red zone at the Taj Hotel');
+            }, 2500);
+          }, 6000);
+        }, 6000);
       }, 3500);
     }, 2500);
   }
@@ -1484,7 +1496,7 @@ async function begin(online) {
   $('menu').classList.remove('show');
   if (online) { const ok = await connect($('room').value || 'TAJ', me.name); if (!ok) toast('Could not reach the squad server — playing solo', '#fa0'); }
   buildViewGun('m4'); viewGun.visible = false;
-  meModel = makeHuman({ shirt: 0x2b3523, vest: 0x1c241a, head: 0x111111, gun: false, uniform: true }); setOutfit(meModel, 'undercover'); scene.add(meModel);
+  meModel = makeHuman({ shirt: 0x2b3523, vest: 0x1c241a, head: 0x111111, gun: false, uniform: true }); setOutfit(meModel, me.outfit); scene.add(meModel);
   startStory(); renderer.domElement.requestPointerLock();
   if (location.hash === '#tajday') { me.pos.set(SPOTS.red.x + 30, 0, SPOTS.red.z + 32); me.yaw = 0.35; me.pitch = 0.3; }
   if (location.hash === '#colonel') { me.pos.set(SPOTS.handler.x + 3, 0, SPOTS.handler.z + 7); me.yaw = 0.3; me.pitch = -0.12; }
@@ -1636,11 +1648,11 @@ function loop() {
 
   // --- network
   netT -= dt;
-  if (net.online && netT <= 0) { netT = 1 / 15; nsend({ t: 's', p: me.pos.toArray().map(v => +v.toFixed(2)), ry: +me.yaw.toFixed(2), hp: Math.round(me.hp), down: me.down, dead: me.dead, ph: phase, z: me.inZone, in: inside }); }
+  if (net.online && netT <= 0) { netT = 1 / 15; nsend({ t: 's', o: me.outfit, p: me.pos.toArray().map(v => +v.toFixed(2)), ry: +me.yaw.toFixed(2), hp: Math.round(me.hp), down: me.down, dead: me.dead, ph: phase, z: me.inZone, in: inside }); }
   for (const p of net.peers.values()) {
     p.pos.lerp(p.target, Math.min(1, dt * 10));
     p.model.position.copy(p.pos); p.model.rotation.y = p.yaw + Math.PI;
-    p.model.visible = !!p.inside === inside && !p.dead; setOutfit(p.model, p.inside ? 'tactical' : 'undercover');
+    p.model.visible = !!p.inside === inside && !p.dead; setOutfit(p.model, p.inside ? 'tactical' : (p.outfit || 'casual'));
     p.model.rotation.x = p.down ? -Math.PI / 2.3 : 0; p.model.position.y = p.pos.y + (p.down ? 0.3 : 0);
   }
 
