@@ -1533,9 +1533,55 @@ function drawMinimap() {
 const clock = new THREE.Clock();
 let netT = 0, bob = 0;
 let meModel = null;
+// ============================================================ DEMO DIRECTOR (#demo) — scripted tour for a video
+const DEMO = location.hash === '#demo';
+let demoT = 0, demoStage = -1;
+function demoDirector(t) {
+  me.hp = 100; me.down = false; // the camera operator can't die
+  const stage = t < 7 ? 0 : t < 12 ? 1 : t < 15 ? 2 : t < 22 ? 3 : t < 28 ? 4 : t < 31 ? 5 : 6;
+  const enter = stage !== demoStage; demoStage = stage;
+  keys.KeyW = false;
+  if (stage === 0) { // evening street, third person
+    if (enter) { phase = 'demo'; marker.visible = false; me.pos.set(-60, 0, 128); toast('Colaba, Mumbai — 26 November 2008, evening', '#ffd21f'); objective('Meet Colonel Rathore at the yellow marker'); }
+    me.yaw = -Math.PI / 2 + Math.sin(t * 0.4) * 0.25; me.pitch = -0.05; keys.KeyW = true;
+  }
+  if (stage === 1) { // the Colonel briefs the squad
+    if (enter) { me.pos.set(SPOTS.handler.x + 1.5, 0, SPOTS.handler.z + 4.5); colonel.lookAt(me.pos.x, 0, me.pos.z); showDialog('Col. Rathore', ['Your training is complete. You move to the next camp in a few days. Until then — the safehouse. Here are your keys and secure phones. If this phone rings, you drop everything.'], null); }
+    me.yaw = 0.25; me.pitch = -0.1;
+  }
+  if (stage === 2) { // time skip
+    if (enter) { $('dialog').style.display = 'none'; dialogQ = null; $('cine').classList.add('show'); $('cinetext').textContent = 'Later that night… 21:48'; $('cinetext').classList.add('on'); setNight(); }
+  }
+  if (stage === 3) { // alert, gear-up, run to the red zone
+    if (enter) {
+      $('cine').classList.remove('show'); fireGroup.visible = true; tajFireLight.intensity = 400; redZoneProps.visible = true; peds.forEach(p => p.userData.panic = true);
+      me.pos.set(SPOTS.red.x + 6, 0, SPOTS.red.z + 60); redMarker.position.copy(SPOTS.red); redMarker.visible = true;
+      phoneUp('⚠ FLASH — CODE RED\nGunmen inside the Taj Mahal Palace hotel.\n\nCol. Rathore: "Suit up — full black kit. Get to the red zone. Move!"', 0); sfx('phone');
+      me.outfit = 'tactical'; if (meModel) setOutfit(meModel, 'tactical'); objective('EMERGENCY: Get to the red zone at the Taj Hotel');
+    }
+    if (t > 18) $('phone').classList.remove('up');
+    me.yaw = 0.05; me.pitch = 0.18; keys.KeyW = true;
+  }
+  if (stage === 4) { // briefing narration
+    if (enter) { redMarker.visible = false; $('cine').classList.add('show'); }
+    $('cinetext').innerText = t < 25 ? NARRATION[2] : NARRATION[6]; $('cinetext').classList.add('on');
+  }
+  if (stage === 5) { if (enter) { $('cine').classList.remove('show'); openLoadout(); } }
+  if (stage === 6) { // inside the Taj
+    if (enter) { $('loadout').classList.remove('show'); me.weapon = 'm4'; me.ammo = 30; me.reserve = 210; me.inv = { frag: 3, flash: 2, smoke: 2 }; buildViewGun('m4'); enterInterior(); me.pos.set(IN.x - 4, 0, IN.z - 22); }
+    const k = t - 31;
+    if (k < 5) { me.yaw = Math.PI + Math.sin(k * 0.5) * 0.15; me.pitch = 0; keys.KeyW = true; }
+    else if (k < 8.5) { me.yaw = Math.PI + (k - 5) * 0.5; me.pitch = Math.min(0.75, (k - 5) * 0.35); }
+    else { me.pitch = 0.05; me.yaw = Math.PI * 1.5 + 0.3 + Math.sin(k) * 0.1; mouseDown = k > 9 && k < 11.5; if (k > 11.6 && k < 11.7 && me.inv.frag > 0) { me.inv.frag--; const d = new THREE.Vector3(0, 0.25, -1).applyQuaternion(camera.quaternion).normalize(); throwNade(camera.getWorldPosition(new THREE.Vector3()).addScaledVector(d, 0.6), d.multiplyScalar(14)); } }
+  }
+}
+window.__demoFrame = () => { demoT += 1 / 12; loop(); return demoT; };
+window.__demoStart = () => { $('quality').value = 'medium'; begin(false); };
+
 function loop() {
-  requestAnimationFrame(loop);
-  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  if (!DEMO) requestAnimationFrame(loop);
+  const dt = DEMO ? 1 / 12 : Math.min(clock.getDelta(), 0.05), t = DEMO ? demoT : clock.elapsedTime;
+  if (DEMO && phase !== 'menu') demoDirector(demoT);
 
   // --- player movement
   if (phase !== 'menu' && phase !== 'brief' && phase !== 'loadout' && phase !== 'end' && !dialogQ && !me.down) {
@@ -1679,4 +1725,4 @@ function loop() {
   grade.uniforms.time.value = t % 100;
   composer.render();
 }
-loop();
+if (!DEMO) loop();
