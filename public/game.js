@@ -6,6 +6,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+THREE.Vector3.prototype.addY = function (h) { this.y += h; return this; };
 
 const $ = id => document.getElementById(id);
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -58,6 +61,60 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
 });
 
+// ============================================================ REALISTIC CHARACTER MODELS (Mixamo-rigged, animated)
+const MODELS = { soldier: null, civilian: null, clips: null };
+try {
+  $('menuStatus') && ($('menuStatus').textContent = 'Loading characters…');
+  const loader = new GLTFLoader();
+  const [sol, civ] = await Promise.all([loader.loadAsync('assets/Soldier.glb'), loader.loadAsync('assets/Michelle.glb')]);
+  const norm = (g) => { const b = new THREE.Box3().setFromObject(g.scene); return 1.78 / (b.max.y - b.min.y); };
+  MODELS.soldier = { scene: sol.scene, scale: norm(sol) };
+  MODELS.civilian = { scene: civ.scene, scale: norm(civ) };
+  const clip = n => sol.animations.find(a => a.name === n);
+  MODELS.clips = { idle: clip('Idle'), walk: clip('Walk'), run: clip('Run') };
+  // civilian rig shares bone names: reuse the soldier clips without root translation
+  MODELS.civClips = Object.fromEntries(Object.entries(MODELS.clips).map(([k, c]) => [k, new THREE.AnimationClip(k, c.duration, c.tracks.filter(t => !t.name.endsWith('.position')))]));
+  for (const m of [sol.scene, civ.scene]) m.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+  $('menuStatus') && ($('menuStatus').textContent = '');
+} catch (err) { console.warn('Character models unavailable, using simple figures', err); }
+const animated = []; // {group, mixer, actions, cur, last}
+function dressModel(group, { civilian, tint, gun }) {
+  const src = civilian ? MODELS.civilian : MODELS.soldier; if (!src) return;
+  const model = SkeletonUtils.clone(src.scene); model.scale.setScalar(src.scale);
+  model.traverse(o => {
+    if (o.isMesh) { o.material = o.material.clone(); if (tint) o.material.color.multiply(new THREE.Color(tint)); o.raycast = () => { }; }
+  });
+  group.add(model);
+  // hide the simple figure, but keep it as an invisible hit-box for bullets
+  group.traverse(o => { if (o.isMesh && !model.getObjectById(o.id) && o.userData.part) o.material.visible = false; });
+  if (gun) {
+    const hand = model.getObjectByName('mixamorigRightHand');
+    const metal = M(0x141414, { metalness: 0.7, roughness: 0.35 });
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.09, 0.62), metal); g.add(body);
+    const mag = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.16, 0.07), metal); mag.position.set(0, -0.1, 0.1); g.add(mag);
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.1, 0.2), M(0x3a2a1a)); stock.position.set(0, -0.02, -0.38); g.add(stock);
+    if (hand) { model.updateMatrixWorld(true); const ws = hand.getWorldScale(new THREE.Vector3()).x; hand.add(g); g.scale.setScalar(1 / ws); g.position.set(0, 0.08 / ws, 0.03 / ws); g.rotation.set(0, Math.PI / 2, Math.PI / 2); }
+  }
+  const mixer = new THREE.AnimationMixer(model), clips = civilian ? MODELS.civClips : MODELS.clips;
+  const actions = { idle: mixer.clipAction(clips.idle), walk: mixer.clipAction(clips.walk), run: mixer.clipAction(clips.run) };
+  actions.idle.play(); mixer.update(Math.random() * 3);
+  const rec = { group, mixer, actions, cur: 'idle', last: new THREE.Vector3(), model };
+  group.userData.anim = rec; animated.push(rec);
+}
+function updateAnimations(dt) {
+  for (const a of animated) {
+    const g = a.group; if (!g.visible || !g.parent || (g.parent !== scene && !g.parent.visible)) continue;
+    const wp = g.getWorldPosition(tmpA);
+    if (wp.distanceToSquared(camera.position) > 110 * 110) { a.last.copy(wp); continue; }
+    const sp = dt > 0 ? wp.distanceTo(a.last) / dt : 0; a.last.copy(wp);
+    const want = g.userData.dead ? a.cur : sp < 0.35 ? 'idle' : sp < 3.2 ? 'walk' : 'run';
+    if (want !== a.cur) { a.actions[want].reset().play(); a.actions[a.cur].crossFadeTo(a.actions[want], 0.25, false); a.cur = want; }
+    a.mixer.update(dt);
+  }
+}
+const tmpA = new THREE.Vector3();
+
 // ============================================================ SKY / LIGHT
 const sky = new Sky(); sky.scale.setScalar(4000); scene.add(sky);
 const su = sky.material.uniforms;
@@ -107,7 +164,7 @@ function setNight() {
   renderer.toneMappingExposure = 0.9;
   bloom.strength = 0.7; bloom.threshold = 0.9;
   cityLights.forEach(l => l.visible = Q.lights);
-  windowMats.forEach(m => m.emissiveIntensity = 0.45);
+  windowMats.forEach(m => m.emissiveIntensity = m.userData.nightGlow ?? 0.45);
 }
 
 // ============================================================ TEXTURES
@@ -211,36 +268,82 @@ gateway(70, -150);
 
 // Taj Mahal Palace (heritage wing) — exterior
 const TAJ = { x: -40, z: -100 };
+const texLoader = new THREE.TextureLoader();
+function photoTex(url, rx = 1, ry = 1) { const t = texLoader.load(url); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); t.anisotropy = 8; return t; }
+// brick with cream bands + arched windows (for towers & side faces), lit windows at night
+const brickBand = canvasTex(512, 512, (c, w, h) => {
+  grain(c, w, h, '#8e4a32', 0.1, 12000);
+  c.strokeStyle = 'rgba(40,20,10,.35)'; for (let y = 0; y < h; y += 8) { c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); }
+  for (let y = 0; y < h; y += 64) { c.fillStyle = '#efe2c4'; c.fillRect(0, y, w, 9); }
+  for (let y = 0; y < h; y += 128) for (let x = 16; x < w; x += 64) { c.fillStyle = '#efe2c4'; c.beginPath(); c.moveTo(x - 4, y + 110); c.lineTo(x - 4, y + 46); c.arc(x + 16, y + 46, 20, Math.PI, 0); c.lineTo(x + 36, y + 110); c.fill(); c.fillStyle = '#2a2a33'; c.beginPath(); c.moveTo(x, y + 108); c.lineTo(x, y + 48); c.arc(x + 16, y + 48, 16, Math.PI, 0); c.lineTo(x + 32, y + 108); c.fill(); }
+});
+const ribTex = canvasTex(512, 256, (c, w, h) => { const g = c.createLinearGradient(0, 0, 32, 0); g.addColorStop(0, '#7a1f1c'); g.addColorStop(0.5, '#c0433a'); g.addColorStop(1, '#7a1f1c'); c.fillStyle = g; for (let x = 0; x < w; x += 32) { c.save(); c.translate(x, 0); c.fillRect(0, 0, 32, h); c.restore(); } }, [1, 1]);
+const roofTileTex = canvasTex(256, 256, (c, w, h) => { grain(c, w, h, '#9a3a26', 0.1); c.strokeStyle = 'rgba(50,15,5,.5)'; for (let y = 0; y < h; y += 16) { c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); for (let x = (y / 16 % 2) * 8; x < w; x += 16) { c.beginPath(); c.moveTo(x, y); c.lineTo(x, y + 16); c.stroke(); } } }, [12, 3]);
 function tajHotel() {
-  const fac = facade({ floors: 6, cols: 22, wall: '#d6b98d', glass: '#202838', lit: 0.55, arched: true, trim: '#f4ead6' });
-  const side = facade({ floors: 6, cols: 9, wall: '#d6b98d', glass: '#202838', lit: 0.5, arched: true, trim: '#f4ead6' });
-  const roofMat = new THREE.MeshStandardMaterial({ color: 0xa9442b, roughness: 0.55, metalness: 0.15 });
-  const mats = [side, side, M(0x7a5a40), M(0x7a5a40), fac, fac];
-  const main = new THREE.Mesh(new THREE.BoxGeometry(96, 32, 34), mats);
-  main.position.set(TAJ.x, 16, TAJ.z); main.castShadow = main.receiveShadow = true; scene.add(main);
-  colliders.push({ minX: TAJ.x - 48, maxX: TAJ.x + 48, minZ: TAJ.z - 17, maxZ: TAJ.z + 17, minY: 0, maxY: 32 }); solids.push(main);
-  // central great dome (iconic red dome)
-  const drum = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 6, 32), M(0xe0c79c)); drum.position.set(TAJ.x, 35, TAJ.z); drum.castShadow = true; scene.add(drum);
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(9.5, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2), roofMat); dome.scale.y = 1.25; dome.position.set(TAJ.x, 38, TAJ.z); dome.castShadow = true; scene.add(dome);
-  const fin = new THREE.Mesh(new THREE.ConeGeometry(0.7, 5, 12), M(0xd4a23c, { metalness: 0.8, roughness: 0.3 })); fin.position.set(TAJ.x, 52, TAJ.z); scene.add(fin);
-  // corner towers with domes + mid-face towers
-  for (const [dx, dz] of [[-46, -15], [46, -15], [-46, 15], [46, 15], [-24, 15], [24, 15]]) {
-    const t = new THREE.Mesh(new THREE.BoxGeometry(9, 38, 9), mats); t.position.set(TAJ.x + dx, 19, TAJ.z + dz); t.castShadow = true; scene.add(t);
-    const d = new THREE.Mesh(new THREE.SphereGeometry(5, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), roofMat); d.scale.y = 1.3; d.position.set(TAJ.x + dx, 38, TAJ.z + dz); d.castShadow = true; scene.add(d);
-    const f = fin.clone(); f.scale.setScalar(0.6); f.position.set(TAJ.x + dx, 46, TAJ.z + dz); scene.add(f);
+  const L = 96, D = 34, H = 26.5;
+  const front = photoTex('assets/taj_front.jpg'), side = photoTex('assets/taj_side.jpg', 1, 1);
+  const em = new THREE.MeshStandardMaterial({ map: front, roughness: 0.8, emissiveMap: front, emissive: 0xffffff, emissiveIntensity: 0.0 });
+  const sm = new THREE.MeshStandardMaterial({ map: side, roughness: 0.8, emissiveMap: side, emissive: 0xffffff, emissiveIntensity: 0.0 });
+  windowMats.push(em, sm); em.userData.nightGlow = sm.userData.nightGlow = 0.08;
+  const roofM = new THREE.MeshStandardMaterial({ map: roofTileTex, roughness: 0.7 });
+  const main = new THREE.Mesh(new THREE.BoxGeometry(L, H, D), [sm, sm, roofM, roofM, em, em]);
+  main.position.set(TAJ.x, H / 2, TAJ.z); main.castShadow = main.receiveShadow = true; scene.add(main);
+  colliders.push({ minX: TAJ.x - L / 2, maxX: TAJ.x + L / 2, minZ: TAJ.z - D / 2, maxZ: TAJ.z + D / 2, minY: 0, maxY: H }); solids.push(main);
+  // hipped red-tile roof
+  const roofShape = new THREE.Shape([new THREE.Vector2(-D / 2, 0), new THREE.Vector2(D / 2, 0), new THREE.Vector2(0, 7)]);
+  const roof = new THREE.Mesh(new THREE.ExtrudeGeometry(roofShape, { depth: L - 6, bevelEnabled: false }), roofM);
+  roof.rotation.y = Math.PI / 2; roof.position.set(TAJ.x - (L - 6) / 2, H, TAJ.z); roof.castShadow = true; scene.add(roof);
+  // gables / dormers with pointed red roofs along both long faces
+  const cream = M(0xf0e4c8, { roughness: 0.6 });
+  for (const sz of [1, -1]) for (let i = 0; i < 14; i++) {
+    const x = TAJ.x - L / 2 + 8 + i * 6.2; if (Math.abs(x - TAJ.x) < 8) continue;
+    const gab = new THREE.Mesh(new THREE.BoxGeometry(3.2, 3, 1.4), new THREE.MeshStandardMaterial({ map: brickBand, roughness: 0.8 })); gab.position.set(x, H + 1.5, TAJ.z + sz * (D / 2 - 0.5)); scene.add(gab);
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(2.4, 2.6, 4), roofM); cap.rotation.y = Math.PI / 4; cap.position.set(x, H + 4.3, TAJ.z + sz * (D / 2 - 0.5)); cap.castShadow = true; scene.add(cap);
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.12, 1.4, 6), cream); spike.position.set(x, H + 6.2, TAJ.z + sz * (D / 2 - 0.5)); scene.add(spike);
   }
-  // cornice + balcony lines
-  for (let f = 1; f < 6; f++) { const c = new THREE.Mesh(new THREE.BoxGeometry(97, 0.5, 35.5), M(0xf2e6cc)); c.position.set(TAJ.x, f * 5.33, TAJ.z); scene.add(c); }
-  // porch / main entrance on the city side (+Z)
-  addBox(16, 6, 6, M(0xf2e6cc), TAJ.x, 0, TAJ.z + 20, { collide: false });
-  const door = new THREE.Mesh(new THREE.PlaneGeometry(6, 5), new THREE.MeshStandardMaterial({ color: 0x110a05, emissive: 0xffa040, emissiveIntensity: 0.6 }));
-  door.position.set(TAJ.x, 2.5, TAJ.z + 17.05); scene.add(door);
-  // Taj Tower (modern wing)
-  const tw = facade({ floors: 22, cols: 12, wall: '#9aa3a8', glass: '#2a3a48', lit: 0.45, trim: '#c8d0d4' });
-  addBox(36, 80, 22, tw, TAJ.x + 75, 0, TAJ.z + 6);
-  return { main, dome };
+  // red ribbed dome helper (onion-ish)
+  const gold = M(0xd4a23c, { metalness: 0.85, roughness: 0.25 });
+  function dome(x, y, z, r, tall = 1.25) {
+    const g = new THREE.Group();
+    const pts = []; for (let i = 0; i <= 24; i++) { const a = i / 24 * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r * (1 + 0.08 * Math.sin(a * 2)), Math.sin(a) * r * tall)); }
+    const d = new THREE.Mesh(new THREE.LatheGeometry(pts, 40), new THREE.MeshStandardMaterial({ map: ribTex, bumpMap: ribTex, bumpScale: 4, roughness: 0.45, metalness: 0.1 })); d.castShadow = true; g.add(d);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 1.02, r * 0.06, 8, 40), cream); ring.rotation.x = Math.PI / 2; g.add(ring);
+    const fin = new THREE.Mesh(new THREE.ConeGeometry(r * 0.08, r * 0.9, 10), gold); fin.position.y = r * tall + r * 0.4; g.add(fin);
+    g.position.set(x, y, z); scene.add(g); return g;
+  }
+  // central tower + great dome with lantern and four satellite domes
+  const towerM = new THREE.MeshStandardMaterial({ map: brickBand, roughness: 0.8 });
+  const ct = new THREE.Mesh(new THREE.BoxGeometry(16, 12, 14), towerM); ct.position.set(TAJ.x, H + 6, TAJ.z); ct.castShadow = true; scene.add(ct);
+  const drum = new THREE.Mesh(new THREE.CylinderGeometry(7, 7.4, 5, 40), towerM); drum.position.set(TAJ.x, H + 14.5, TAJ.z); scene.add(drum);
+  dome(TAJ.x, H + 17, TAJ.z, 7.6, 1.15);
+  const lantern = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 3, 12), cream); lantern.position.set(TAJ.x, H + 27.5, TAJ.z); scene.add(lantern);
+  dome(TAJ.x, H + 29, TAJ.z, 1.6, 1.2);
+  for (const [dx, dz] of [[-7, -6], [7, -6], [-7, 6], [7, 6]]) { const p = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 3, 12), cream); p.position.set(TAJ.x + dx, H + 13.5, TAJ.z + dz); scene.add(p); dome(TAJ.x + dx, H + 15, TAJ.z + dz, 1.6, 1.3); }
+  // round corner towers with ribbed domes
+  for (const [dx, dz] of [[-L / 2, -D / 2], [L / 2, -D / 2], [-L / 2, D / 2], [L / 2, D / 2]]) {
+    const t = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.6, H + 5, 32), new THREE.MeshStandardMaterial({ map: brickBand, roughness: 0.8 })); t.position.set(TAJ.x + dx, (H + 5) / 2, TAJ.z + dz); t.castShadow = true; scene.add(t);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 1, 32), cream); band.position.set(TAJ.x + dx, H + 5, TAJ.z + dz); scene.add(band);
+    dome(TAJ.x + dx, H + 5.5, TAJ.z + dz, 4.4, 1.15);
+  }
+  // arcaded porch on the city side
+  for (let i = -3; i <= 3; i++) { const col = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 5, 12), cream); col.position.set(TAJ.x + i * 3, 2.5, TAJ.z + D / 2 + 5); col.castShadow = true; scene.add(col); }
+  addBox(22, 0.8, 7, cream, TAJ.x, 5, TAJ.z + D / 2 + 3, { collide: false });
+  const door = new THREE.Mesh(new THREE.PlaneGeometry(7, 4.5), new THREE.MeshStandardMaterial({ color: 0x110a05, emissive: 0xffa040, emissiveIntensity: 0.6 }));
+  door.position.set(TAJ.x, 2.25, TAJ.z + D / 2 + 0.05); scene.add(door);
+  // Taj Mahal Tower (1973 wing) with its crown
+  const tw = photoTex('assets/taj_tower.jpg');
+  const twM = new THREE.MeshStandardMaterial({ map: tw, roughness: 0.75, emissiveMap: tw, emissive: 0xffffff, emissiveIntensity: 0 }); windowMats.push(twM); twM.userData.nightGlow = 0.12;
+  const twS = new THREE.MeshStandardMaterial({ map: brickBand, color: 0xb89a80, roughness: 0.85 });
+  const tower = new THREE.Mesh(new THREE.BoxGeometry(30, 78, 22), [twS, twS, M(0x8a7a6a), M(0x8a7a6a), twM, twM]);
+  tower.position.set(TAJ.x + 78, 39, TAJ.z + 4); tower.castShadow = tower.receiveShadow = true; scene.add(tower);
+  colliders.push({ minX: TAJ.x + 63, maxX: TAJ.x + 93, minZ: TAJ.z - 7, maxZ: TAJ.z + 15, minY: 0, maxY: 78 }); solids.push(tower);
+  const crown = new THREE.Mesh(new THREE.BoxGeometry(33, 6, 25), cream); crown.position.set(TAJ.x + 78, 81, TAJ.z + 4); crown.castShadow = true; scene.add(crown);
+  for (let i = 0; i < 12; i++) { const pin = new THREE.Mesh(new THREE.ConeGeometry(0.35, 2, 6), cream); pin.position.set(TAJ.x + 63 + i * 2.7, 85, TAJ.z - 8.5); scene.add(pin); const pin2 = pin.clone(); pin2.position.z = TAJ.z + 16.5; scene.add(pin2); }
+  addBox(40, 6, 8, cream, TAJ.x + 78, 0, TAJ.z + 19, { collide: false }); // tower porch arcade
+  return { main };
 }
 const taj = tajHotel();
+
 
 // Smoke/fire on the Taj (only after the alert)
 const fireGroup = new THREE.Group(); fireGroup.visible = false; scene.add(fireGroup);
@@ -318,7 +421,7 @@ const siren = new THREE.PointLight(0x2050ff, 0, 40); siren.position.set(TAJ.x + 
 const siren2 = new THREE.PointLight(0xff2030, 0, 40); siren2.position.set(TAJ.x - 12, 3, TAJ.z + 38); scene.add(siren2);
 
 // ============================================================ CHARACTERS
-function makeHuman({ shirt = 0x3b4a3a, pants = 0x2c3325, skin = 0x8d5a3b, head = 0x1f2a1e, vest = 0x2a3324, gun = true, tag } = {}) {
+function makeHuman({ shirt = 0x3b4a3a, pants = 0x2c3325, skin = 0x8d5a3b, head = 0x1f2a1e, vest = 0x2a3324, gun = true, tag, modelTint, uniform = false, noModel = false } = {}) {
   const g = new THREE.Group();
   const mk = (geo, color, x, y, z, part) => { const m = new THREE.Mesh(geo, M(color, { roughness: 0.8 })); m.position.set(x, y, z); m.castShadow = true; m.userData.part = part; g.add(m); return m; };
   const legL = mk(new THREE.CapsuleGeometry(0.13, 0.7, 4, 8), pants, -0.14, 0.48, 0, 'body');
@@ -332,6 +435,7 @@ function makeHuman({ shirt = 0x3b4a3a, pants = 0x2c3325, skin = 0x8d5a3b, head =
   if (gun) { const gm = mk(new THREE.BoxGeometry(0.07, 0.12, 0.85), 0x151515, 0.15, 1.2, 0.45, 'body'); gm.material.metalness = 0.6; }
   g.userData = { legL, legR, armL, armR, torso, headMesh: h };
   if (tag) { const s = textSprite(tag); s.position.y = 2.25; g.add(s); }
+  if (!noModel) dressModel(g, { civilian: !gun && !uniform, tint: modelTint, gun });
   return g;
 }
 function textSprite(text, color = '#fff') {
@@ -340,7 +444,7 @@ function textSprite(text, color = '#fff') {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, fog: false })); s.scale.set(1.6, 0.4, 1); s.renderOrder = 10; return s;
 }
 // The handler (Colonel) NPC
-const colonel = makeHuman({ shirt: 0x5b6b4a, vest: 0x4b5a3a, head: 0x8a1c1c, tag: 'Col. Rathore' });
+const colonel = makeHuman({ shirt: 0x5b6b4a, vest: 0x4b5a3a, head: 0x8a1c1c, tag: 'Col. Rathore', modelTint: 0xb8c49a, gun: false, uniform: true });
 colonel.position.copy(SPOTS.handler); colonel.rotation.y = Math.PI; scene.add(colonel);
 // pedestrians
 // Mumbai crowd: varied clothing (kurtas, sarees, shirts), skin tones, walking speeds. Count scales with graphics quality.
@@ -350,7 +454,7 @@ const SKIN = [0x8d5a3b, 0x7a4a2e, 0xa06a48, 0x6a3e26, 0xb07a55];
 const PED_MAX = 90;
 for (let i = 0; i < PED_MAX; i++) {
   const saree = Math.random() < 0.3, c = CLOTH[Math.floor(rand(0, CLOTH.length))];
-  const p = makeHuman({ shirt: c, pants: saree ? c : [0x2a2a3a, 0x4a3a2a, 0xd8d0c0, 0x222222][i % 4], vest: saree ? CLOTH[(i * 5) % CLOTH.length] : c, skin: SKIN[i % SKIN.length], head: 0x111111, gun: false });
+  const p = makeHuman({ shirt: c, pants: saree ? c : [0x2a2a3a, 0x4a3a2a, 0xd8d0c0, 0x222222][i % 4], vest: saree ? CLOTH[(i * 5) % CLOTH.length] : c, skin: SKIN[i % SKIN.length], head: 0x111111, gun: false, modelTint: new THREE.Color(c).lerp(new THREE.Color(0xffffff), 0.55).getHex() });
   p.scale.setScalar(rand(0.88, 1.06));
   if (Math.random() < 0.3) { const bag = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.35, 0.15), M([0x3a2a1a, 0x7a1a1a, 0x1a1a5a][i % 3])); bag.position.set(0.3, 0.95, 0); p.add(bag); }
   const alongX = Math.random() < 0.7;
@@ -362,12 +466,12 @@ for (let i = 0; i < PED_MAX; i++) {
 // Mumbai Police (khaki) + ambulances + onlookers at the red zone — appear after the alert
 const police = [];
 for (let i = 0; i < 10; i++) {
-  const cop = makeHuman({ shirt: 0xb59a62, pants: 0xb59a62, vest: 0x8a7448, head: 0x3a2a1a, tag: i === 0 ? 'Mumbai Police' : undefined });
+  const cop = makeHuman({ shirt: 0xb59a62, pants: 0xb59a62, vest: 0x8a7448, head: 0x3a2a1a, tag: i === 0 ? 'Mumbai Police' : undefined, modelTint: 0xe0c890 });
   cop.position.set(TAJ.x - 22 + i * 4.5 + rand(-1, 1), 0, TAJ.z + 39 + rand(-1, 1)); cop.rotation.y = Math.PI + rand(-0.4, 0.4);
   redZoneProps.add(cop); police.push(cop);
 }
 for (let i = 0; i < 24; i++) { // onlookers behind barricades
-  const o = makeHuman({ shirt: CLOTH[i % CLOTH.length], pants: 0x2a2a3a, vest: CLOTH[(i * 3) % CLOTH.length], skin: SKIN[i % 5], head: 0x111111, gun: false });
+  const o = makeHuman({ shirt: CLOTH[i % CLOTH.length], pants: 0x2a2a3a, vest: CLOTH[(i * 3) % CLOTH.length], skin: SKIN[i % 5], head: 0x111111, gun: false, modelTint: new THREE.Color(CLOTH[i % CLOTH.length]).lerp(new THREE.Color(0xffffff), 0.5).getHex() });
   o.position.set(TAJ.x - 30 + rand(0, 60), 0, TAJ.z + 47 + rand(0, 6)); o.rotation.y = Math.PI + rand(-0.5, 0.5); o.userData.watch = true; redZoneProps.add(o); police.push(o);
 }
 const ambLights = [];
@@ -380,57 +484,162 @@ for (const ax of [-28, 26]) {
 }
 let pedLimit = PED_MAX;
 
-// ============================================================ TAJ INTERIOR (assault map)
+// ============================================================ TAJ INTERIOR — 3 floors around a galleried atrium
 const IN = { x: 1000, z: 0 }; // interior origin, far from the city
+const FLOOR_H = 5, FLOORS = 3;
 const interiorLights = [];
 const fires = [];
+const FLOOR_NAMES = ['Ground floor', '1st floor', '2nd floor'];
 function buildInterior() {
-  const wallMat = new THREE.MeshStandardMaterial({ map: woodTex, bumpMap: woodTex, bumpScale: 2, roughness: 0.6, color: 0xd8b48a });
-  const ceilMat = M(0xe9dcc0, { roughness: 0.9 });
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(82, 66), new THREE.MeshStandardMaterial({ map: marbleTex, roughness: 0.15, metalness: 0.05, envMapIntensity: 0.6 }));
-  floor.rotation.x = -Math.PI / 2; floor.position.set(IN.x, 0.01, IN.z); floor.receiveShadow = true; scene.add(floor);
-  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(82, 66), ceilMat); ceil.rotation.x = Math.PI / 2; ceil.position.set(IN.x, 7, IN.z); scene.add(ceil);
-  const H = 7, T = 0.6;
-  const seg = (x1, z1, x2, z2) => { const w = Math.abs(x2 - x1) || T, d = Math.abs(z2 - z1) || T; addBox(w, H, d, wallMat, IN.x + (x1 + x2) / 2, 0, IN.z + (z1 + z2) / 2, { cast: false }); };
-  // wall along X at fixed z, from a to b, with door gaps (centers)
-  const wallX = (z, a, b, gaps = [], gw = 4) => { let s = a; for (const g of [...gaps].sort((p, q) => p - q)) { if (g - gw / 2 > s) seg(s, z, g - gw / 2, z); s = g + gw / 2; } if (b > s) seg(s, z, b, z); };
-  const wallZ = (x, a, b, gaps = [], gw = 4) => { let s = a; for (const g of [...gaps].sort((p, q) => p - q)) { if (g - gw / 2 > s) seg(x, s, x, g - gw / 2); s = g + gw / 2; } if (b > s) seg(x, s, x, b); };
-  wallX(33, -41, 41); wallX(-33, -41, 41); wallZ(-41, -33, 33); wallZ(41, -33, 33);
-  wallX(12, -41, 41, [-28, 0, 28]);
-  wallZ(-6, -10, 12, [6, -5]); wallZ(6, -10, 12, [7, -4]);
-  wallX(1, -41, -6, [-23]); wallX(1, 6, 41, [23]);
-  wallX(-10, -41, 41, [-30, 0, 30]);
-  // lobby: pillars, desk, grand staircase, sofas
-  const pill = M(0xf3ead8, { roughness: 0.35 });
-  for (const px of [-14, 14]) for (const pz of [17, 26]) { const p = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 7, 20), pill); p.position.set(IN.x + px, 3.5, IN.z + pz); p.castShadow = true; scene.add(p); colliders.push({ minX: IN.x + px - .8, maxX: IN.x + px + .8, minZ: IN.z + pz - .8, maxZ: IN.z + pz + .8, minY: 0, maxY: 7 }); solids.push(p); }
-  addBox(10, 1.2, 2, M(0x3a2214, { roughness: 0.4 }), IN.x + 24, 0, IN.z + 22);
-  for (let i = 0; i < 8; i++) addBox(8, 0.5 * (i + 1), 1.2, M(0x8a1c2a), IN.x - 33, 0, IN.z + 28 - i * 1.2); // grand staircase (red carpet)
-  const sofa = M(0x6a1f24, { roughness: 0.9 });
-  for (const [sx, sz] of [[-6, 20], [6, 20], [-24, 16], [30, 15]]) addBox(3.5, 1, 1.2, sofa, IN.x + sx, 0, IN.z + sz);
-  // corridor & room cover
-  const crate = M(0x4a3a2a);
-  for (const [cx, cz] of [[-2, 4], [2, -6], [-20, 8], [-30, -3], [20, 4], [33, -4], [-12, -6], [14, -7]]) addBox(2.2, 1.1, 1.2, crate, IN.x + cx, 0, IN.z + cz);
-  // rooms: beds
-  for (const [bx, bz] of [[-34, 8], [34, 9], [-34, -6], [34, -6]]) { addBox(3, 0.7, 4, M(0xf0ece4), IN.x + bx, 0, IN.z + bz); }
-  // ballroom: pillars, round tables, boss sandbag nest
-  for (const px of [-18, 18]) for (const pz of [-16, -26]) { const p = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 7, 20), pill); p.position.set(IN.x + px, 3.5, IN.z + pz); p.castShadow = true; scene.add(p); colliders.push({ minX: IN.x + px - .8, maxX: IN.x + px + .8, minZ: IN.z + pz - .8, maxZ: IN.z + pz + .8, minY: 0, maxY: 7 }); solids.push(p); }
-  for (const [tx, tz] of [[-9, -15], [9, -15], [-28, -22], [27, -16], [-9, -22], [10, -21]]) addBox(2.4, 0.9, 2.4, M(0xf4f0e8), IN.x + tx, 0, IN.z + tz);
-  const sand = M(0x8f7d5a, { roughness: 1 });
-  addBox(7, 1.15, 1.3, sand, IN.x, 0, IN.z - 25); addBox(1.3, 1.15, 3, sand, IN.x - 4, 0, IN.z - 26.5); addBox(1.3, 1.15, 3, sand, IN.x + 4, 0, IN.z - 26.5);
-  // chandeliers
-  const chand = new THREE.MeshStandardMaterial({ color: 0xffe9b8, emissive: 0xffd28a, emissiveIntensity: 3 });
-  for (const [lx, lz, col, intensity] of [[0, 22, 0xffd8a0, 30], [-22, 6, 0xffd8a0, 12], [22, -5, 0xffd8a0, 12], [0, -20, 0xffd8a0, 22], [0, 0, 0xffd8a0, 10]]) {
-    const c = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 10), chand); c.position.set(IN.x + lx, 6.2, IN.z + lz); scene.add(c);
-    const l = new THREE.PointLight(col, intensity, 30, 1.5); l.position.set(IN.x + lx, 5.8, IN.z + lz); l.visible = false; scene.add(l); interiorLights.push(l);
-    l.userData.base = intensity;
+  const X = v => IN.x + v, Z = v => IN.z + v;
+  // ---- materials (painted from the reference photos)
+  const plaster = canvasTex(256, 512, (c, w, h) => { grain(c, w, h, '#efe3c8', 0.04); c.fillStyle = '#d9c7a2'; c.fillRect(0, h * 0.78, w, h * 0.22); c.strokeStyle = '#b8a27a'; c.lineWidth = 3; c.strokeRect(10, h * 0.8, w - 20, h * 0.18); c.fillStyle = '#fff6e0'; c.fillRect(0, 0, w, 14); }, [4, 1]);
+  const roomWall = canvasTex(256, 512, (c, w, h) => { grain(c, w, h, '#8fa2ac', 0.04); c.fillStyle = '#e8dcc0'; c.fillRect(0, h * 0.8, w, h * 0.2); c.strokeStyle = '#c8b890'; c.lineWidth = 3; for (let x = 8; x < w; x += 64) c.strokeRect(x, h * 0.82, 50, h * 0.15); c.fillStyle = '#f4ead4'; c.fillRect(0, 0, w, 16); }, [3, 1]);
+  const goldWall = canvasTex(256, 512, (c, w, h) => { const g = c.createLinearGradient(0, 0, w, 0); g.addColorStop(0, '#a87a22'); g.addColorStop(0.5, '#f0c860'); g.addColorStop(1, '#a87a22'); c.fillStyle = g; c.fillRect(0, 0, w, h); c.globalAlpha = 0.15; grain(c, w, h, 'rgba(0,0,0,0)', 0.2, 4000); c.globalAlpha = 1; c.fillStyle = '#fff3d4'; c.fillRect(0, h * 0.85, w, h * 0.15); }, [4, 1]);
+  const carpet = canvasTex(512, 512, (c, w, h) => { c.fillStyle = '#5a7a7a'; c.fillRect(0, 0, w, h); for (let i = 0; i < 220; i++) { const x = rand(0, w), y = rand(0, h), r = rand(6, 22); c.strokeStyle = ['#d8b040', '#e8c860', '#a88a30', '#c0d0c0'][i % 4]; c.lineWidth = rand(2, 4); c.beginPath(); c.arc(x, y, r, rand(0, 3), rand(3, 6.3)); c.stroke(); } }, [10, 10]);
+  const diamond = canvasTex(512, 512, (c, w, h) => { grain(c, w, h, '#e8dcc6', 0.03); c.fillStyle = '#1c1a1c'; for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) if ((x + y) % 2) { const cx = x * 64 + 32, cy = y * 64 + 32; c.beginPath(); c.moveTo(cx, cy - 22); c.lineTo(cx + 22, cy); c.lineTo(cx, cy + 22); c.lineTo(cx - 22, cy); c.fill(); } c.strokeStyle = '#2a2830'; c.lineWidth = 6; c.strokeRect(0, 0, w, h); }, [8, 8]);
+  const stairTex = photoTex('assets/stair_carpet.jpg', 1, 1);
+  const quilt = photoTex('assets/quilt.jpg', 1, 1);
+  const balusters = canvasTex(256, 64, (c, w, h) => { c.clearRect(0, 0, w, h); c.fillStyle = '#f4f0e6'; c.fillRect(0, 0, w, 8); c.fillRect(0, h - 8, w, 8); for (let x = 4; x < w; x += 16) { c.fillRect(x, 8, 6, h - 16); c.beginPath(); c.arc(x + 3, h / 2, 6, 0, 7); c.fill(); } }, [6, 1]);
+  const iron = canvasTex(256, 64, (c, w, h) => { c.clearRect(0, 0, w, h); c.strokeStyle = '#151515'; c.lineWidth = 3; c.strokeRect(1, 4, w - 2, h - 8); for (let x = 0; x < w; x += 32) { c.beginPath(); c.ellipse(x + 16, h / 2, 10, 22, 0, 0, 7); c.stroke(); c.beginPath(); c.arc(x + 16, h / 2, 5, 0, 7); c.stroke(); } }, [4, 1]);
+  const mPlaster = new THREE.MeshStandardMaterial({ map: plaster, roughness: 0.85 });
+  const mRoom = new THREE.MeshStandardMaterial({ map: roomWall, roughness: 0.85 });
+  const mGold = new THREE.MeshStandardMaterial({ map: goldWall, roughness: 0.35, metalness: 0.55 });
+  const mCarpet = new THREE.MeshStandardMaterial({ map: carpet, roughness: 0.95 });
+  const mCeil = M(0xf2ead8, { roughness: 0.9 });
+  const mWhite = M(0xf4f0e6, { roughness: 0.5 });
+  const mWood = new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.45, color: 0x8a5a3a });
+  const mBal = new THREE.MeshStandardMaterial({ map: balusters, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.5 });
+  const mIron = new THREE.MeshStandardMaterial({ map: iron, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide, metalness: 0.6, roughness: 0.4 });
+  // ---- ground floor
+  const g0 = new THREE.Mesh(new THREE.PlaneGeometry(70, 50), new THREE.MeshStandardMaterial({ map: diamond, roughness: 0.18, envMapIntensity: 0.6 }));
+  g0.rotation.x = -Math.PI / 2; g0.position.set(X(0), 0.01, Z(0)); g0.receiveShadow = true; scene.add(g0);
+  // ---- slabs (floor 1, floor 2, roof) built around the atrium + stair holes
+  const slabMats = [mCeil, mCeil, mCarpet, mCeil, mCeil, mCeil];
+  const slab = (x1, x2, z1, z2, y) => { const m = new THREE.Mesh(new THREE.BoxGeometry(x2 - x1, 0.3, z2 - z1), slabMats); m.position.set(X((x1 + x2) / 2), y - 0.15, Z((z1 + z2) / 2)); m.receiveShadow = true; scene.add(m); colliders.push({ minX: X(x1), maxX: X(x2), minZ: Z(z1), maxZ: Z(z2), minY: y - 0.3, maxY: y }); solids.push(m); };
+  const common = y => { slab(-35, 35, 12, 25, y); slab(-35, 35, -25, -12, y); slab(-35, -8, -12, 12, y); slab(8, 13, -12, 12, y); slab(17, 35, -12, 12, y); };
+  common(5); slab(13, 17, -3, 12, 5);                       // floor 1 (hole over flight A: z -12..-3)
+  common(10); slab(13, 17, -12, 0, 10); slab(13, 17, 9, 12, 10); // floor 2 (hole over flight B: z 0..9)
+  common(15); slab(13, 17, -12, 12, 15);                    // roof
+  const sky = new THREE.Mesh(new THREE.PlaneGeometry(16, 24), new THREE.MeshStandardMaterial({ map: canvasTex(256, 384, (c, w, h) => { c.fillStyle = '#26304a'; c.fillRect(0, 0, w, h); c.strokeStyle = '#e8e0cc'; c.lineWidth = 6; for (let x = 0; x <= w; x += 32) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke(); } for (let y = 0; y <= h; y += 48) { c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); } }), emissive: 0x1a2540, emissiveIntensity: 1 }));
+  sky.rotation.x = Math.PI / 2; sky.position.set(X(0), 14.9, Z(0)); scene.add(sky);
+  // ---- walls
+  const seg = (x1, z1, x2, z2, y, mat, h = FLOOR_H) => { const T = 0.35, w = Math.abs(x2 - x1) || T, d = Math.abs(z2 - z1) || T; addBox(w, h, d, mat, X((x1 + x2) / 2), y, Z((z1 + z2) / 2), { cast: false }); };
+  const wallX = (z, a, b, y, mat, gaps = [], gw = 1.8) => { let s = a; for (const g of [...gaps].sort((p, q) => p - q)) { if (g - gw / 2 > s) seg(s, z, g - gw / 2, z, y, mat); seg(g - gw / 2, z, g + gw / 2, z, y + 2.6, mat, FLOOR_H - 2.6); s = g + gw / 2; } if (b > s) seg(s, z, b, z, y, mat); };
+  const wallZ = (x, a, b, y, mat, gaps = [], gw = 1.8) => { let s = a; for (const g of [...gaps].sort((p, q) => p - q)) { if (g - gw / 2 > s) seg(x, s, x, g - gw / 2, y, mat); seg(x, g - gw / 2, x, g + gw / 2, y + 2.6, mat, FLOOR_H - 2.6); s = g + gw / 2; } if (b > s) seg(x, s, x, b, y, mat); };
+  const doorM = M(0x6a3e22, { roughness: 0.5 });
+  const door = (x, z, alongX, y) => { const d = new THREE.Mesh(new THREE.BoxGeometry(alongX ? 0.08 : 1.6, 2.5, alongX ? 1.6 : 0.08), doorM); d.position.set(X(x + (alongX ? 0.85 : 0)), y + 1.25, Z(z + (alongX ? 0 : 0.85))); scene.add(d); };
+  for (let f = 0; f < FLOORS; f++) {
+    const y = f * FLOOR_H;
+    // outer walls with tall arched windows
+    wallX(25, -35, 35, y, mPlaster); wallX(-25, -35, 35, y, mPlaster); wallZ(-35, -25, 25, y, mPlaster); wallZ(35, -25, 25, y, mPlaster);
+    for (let i = -30; i <= 30; i += 8) for (const sz of [24.8, -24.8]) { const w = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 2.8), new THREE.MeshStandardMaterial({ color: 0x0a1428, emissive: 0x1a2a55, emissiveIntensity: 0.8 })); w.position.set(X(i), y + 2.2, Z(sz)); w.rotation.y = sz > 0 ? Math.PI : 0; scene.add(w); }
+    if (f === 0) {
+      wallX(-16, -35, 35, y, mPlaster, [-22, -4, 4, 26], 3);  // entrance lobby (south)
+      wallX(16, -35, 35, y, mPlaster, [-22, 0, 26], 3);       // Sea Lounge restaurant (north)
+      wallZ(-12, -16, 16, y, mGold, [-6, 6], 3);              // ballroom (west)
+      wallZ(18, -16, 16, y, mPlaster, [-6, 6], 3);            // reception (east)
+    } else {
+      const rooms = [-24, -12, 0, 12, 24], doorsX = [-29.5, -18, -6, 6, 18, 29.5];
+      wallX(16, -35, 35, y, mRoom, doorsX); wallX(-16, -35, 35, y, mRoom, doorsX);
+      for (const rx of rooms) { seg(rx, 16, rx, 25, y, mRoom); seg(rx, -16, rx, -25, y, mRoom); }
+      wallZ(-12, -16, 16, y, mRoom, [-8, 8]); seg(-35, 0, -12, 0, y, mRoom);
+      wallZ(18, -16, 16, y, mRoom, [-8, 8]); seg(18, 0, 35, 0, y, mRoom);
+      doorsX.forEach(dx => { door(dx - 0.9, 16, true, y); door(dx - 0.9, -16, true, y); });
+      // furnish every guest room (bed with embroidered quilt, side tables, desk, TV, armchair)
+      const roomCenters = [];
+      for (let i = 0; i < 6; i++) { const cx = doorsX[i]; roomCenters.push([cx, 21, 1], [cx, -21, -1]); }
+      roomCenters.push([-24, 8, 1], [-24, -8, -1], [27, 8, 1], [27, -8, -1]);
+      for (const [cx, cz, s] of roomCenters) {
+        const bz = cz + s * 2.2;
+        addBox(2.2, 0.5, 2.4, mWood, X(cx), y, Z(bz));
+        const mat = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.3, 2.3), [mWhite, mWhite, new THREE.MeshStandardMaterial({ map: quilt, roughness: 0.9 }), mWhite, mWhite, mWhite]); mat.position.set(X(cx), y + 0.65, Z(bz)); scene.add(mat);
+        const head = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 0.12, 24, 1, false, 0, Math.PI), M(0xe8dcc4)); head.rotation.set(Math.PI / 2, 0, s > 0 ? 0 : Math.PI); head.position.set(X(cx), y + 0.9, Z(bz + s * 1.2)); scene.add(head);
+        for (const sx of [-1.5, 1.5]) { addBox(0.5, 0.6, 0.5, mWood, X(cx + sx), y, Z(bz + s * 0.9), { collide: false }); const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, 0.25, 10), new THREE.MeshStandardMaterial({ color: 0xfff0d0, emissive: 0xffc070, emissiveIntensity: 1.5 })); lamp.position.set(X(cx + sx), y + 0.85, Z(bz + s * 0.9)); scene.add(lamp); }
+        addBox(2.4, 0.8, 0.6, M(0x1a1410, { roughness: 0.3 }), X(cx + 2.8), y, Z(cz - s * 0.5));
+        const tv = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.65, 0.06), M(0x050505, { roughness: 0.1, metalness: 0.5 })); tv.position.set(X(cx + 2.8), y + 1.25, Z(cz - s * 0.5)); scene.add(tv);
+        addBox(0.8, 0.8, 0.8, M(0x4a5a6a), X(cx - 2.6), y, Z(cz - s * 1.6));
+      }
+    }
   }
-  // fires (heritage wing burning)
-  for (const [fx, fz] of [[-30, 8], [28, -28], [-14, 24]]) {
-    const g = new THREE.Group(); scene.add(g); emitter(g, IN.x + fx, 0.5, IN.z + fz, 18, true); emitter(g, IN.x + fx, 2, IN.z + fz, 10, false);
-    const l = new THREE.PointLight(0xff6020, 35, 18, 1.6); l.position.set(IN.x + fx, 1.5, IN.z + fz); l.intensity = 18; l.visible = false; scene.add(l); interiorLights.push(l); fires.push(l);
+  // ---- atrium: white columns, arches, balustrades on upper floors
+  const colPos = [];
+  for (const x of [-8, 0, 8]) for (const z of [-12, 12]) colPos.push([x, z]);
+  for (const z of [-4, 4]) for (const x of [-8, 8]) colPos.push([x, z]);
+  for (let f = 0; f < FLOORS; f++) {
+    const y = f * FLOOR_H;
+    for (const [cx, cz] of colPos) { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, FLOOR_H - 0.3, 14), mWhite); c.position.set(X(cx), y + (FLOOR_H - 0.3) / 2, Z(cz)); c.castShadow = true; scene.add(c); colliders.push({ minX: X(cx) - 0.36, maxX: X(cx) + 0.36, minZ: Z(cz) - 0.36, maxZ: Z(cz) + 0.36, minY: y, maxY: y + FLOOR_H }); solids.push(c); }
+    for (const [a, b] of [[[-8, -12], [0, -12]], [[0, -12], [8, -12]], [[-8, 12], [0, 12]], [[0, 12], [8, 12]], [[-8, -12], [-8, -4]], [[-8, -4], [-8, 4]], [[-8, 4], [-8, 12]], [[8, -12], [8, -4]], [[8, -4], [8, 4]], [[8, 4], [8, 12]]]) {
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const arch = new THREE.Mesh(new THREE.TorusGeometry(len / 2 - 0.3, 0.18, 8, 24, Math.PI), mWhite);
+      arch.position.set(X((a[0] + b[0]) / 2), y + FLOOR_H - 0.3 - (len / 2 - 0.3) * 0.35, Z((a[1] + b[1]) / 2)); arch.scale.y = 0.35; arch.rotation.y = a[0] === b[0] ? Math.PI / 2 : 0; scene.add(arch);
+      if (f > 0) { // balustrade
+        const bal = new THREE.Mesh(new THREE.PlaneGeometry(len, 1.1), mBal); bal.position.set(X((a[0] + b[0]) / 2), y + 0.55, Z((a[1] + b[1]) / 2)); bal.rotation.y = a[0] === b[0] ? Math.PI / 2 : 0; scene.add(bal);
+        const top = new THREE.Mesh(new THREE.BoxGeometry(a[0] === b[0] ? 0.25 : len, 0.1, a[0] === b[0] ? len : 0.25), mWood); top.position.set(bal.position.x, y + 1.12, bal.position.z); scene.add(top);
+        colliders.push({ minX: X(Math.min(a[0], b[0])) - 0.15, maxX: X(Math.max(a[0], b[0])) + 0.15, minZ: Z(Math.min(a[1], b[1])) - 0.15, maxZ: Z(Math.max(a[1], b[1])) + 0.15, minY: y, maxY: y + 1.15 });
+      }
+    }
+  }
+  // ---- grand staircases (red patterned carpet, wrought-iron balustrade)
+  const flight = (z0, y0, dir) => {
+    for (let i = 1; i <= 15; i++) {
+      const top = y0 + i * FLOOR_H / 15, zc = z0 + dir * (i - 0.5) * 0.6;
+      const st = new THREE.Mesh(new THREE.BoxGeometry(4, top - y0, 0.6), [mWood, mWood, new THREE.MeshStandardMaterial({ map: stairTex, roughness: 0.9 }), mWood, mWood, mWood]);
+      st.position.set(X(15), y0 + (top - y0) / 2, Z(zc)); st.receiveShadow = true; scene.add(st);
+      colliders.push({ minX: X(13), maxX: X(17), minZ: Z(zc - 0.3), maxZ: Z(zc + 0.3), minY: y0, maxY: top }); solids.push(st);
+    }
+    const zA = z0, zB = z0 + dir * 9, len = Math.hypot(9, FLOOR_H);
+    for (const sx of [13, 17]) {
+      const rail = new THREE.Mesh(new THREE.PlaneGeometry(len, 1.0), mIron); rail.position.set(X(sx), y0 + FLOOR_H / 2 + 0.6, Z((zA + zB) / 2)); rail.rotation.set(0, Math.PI / 2, 0); rail.rotateX(dir * Math.atan2(FLOOR_H, 9)); scene.add(rail);
+      const hand = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, len, 8), mWood); hand.position.set(X(sx), y0 + FLOOR_H / 2 + 1.1, Z((zA + zB) / 2)); hand.rotation.x = Math.PI / 2 - dir * Math.atan2(FLOOR_H, 9); scene.add(hand);
+      colliders.push({ minX: X(sx) - 0.1, maxX: X(sx) + 0.1, minZ: Z(Math.min(zA, zB)), maxZ: Z(Math.max(zA, zB)), minY: y0, maxY: y0 + FLOOR_H + 1.1 });
+    }
+  };
+  flight(-12, 0, 1);  // ground → 1st (z -12 → -3)
+  flight(0, 5, 1);    // 1st → 2nd (z 0 → 9)
+  colliders.push({ minX: X(13), maxX: X(17), minZ: Z(-12.15), maxZ: Z(-11.85), minY: 5, maxY: 6.15 });
+  colliders.push({ minX: X(13), maxX: X(17), minZ: Z(-0.15), maxZ: Z(0.15), minY: 10, maxY: 11.15 });
+  // ---- ballroom (gold, chandeliers, round tables, stage with piano)
+  for (const [tx, tz] of [[-30, -10], [-24, -10], [-18, -10], [-30, 0], [-24, 0], [-18, 0], [-30, 10], [-24, 10], [-18, 10]]) {
+    const t = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.25, 0.8, 24), M(0xe8dcc0, { roughness: 0.9 })); t.position.set(X(tx), 0.4, Z(tz)); t.castShadow = true; scene.add(t);
+    colliders.push({ minX: X(tx) - 1.1, maxX: X(tx) + 1.1, minZ: Z(tz) - 1.1, maxZ: Z(tz) + 1.1, minY: 0, maxY: 0.8 }); solids.push(t);
+    const fl = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), M(0xd85a7a)); fl.position.set(X(tx), 0.95, Z(tz)); scene.add(fl);
+  }
+  addBox(10, 0.6, 3, mWood, X(-24), 0, Z(-14.5));
+  addBox(1.6, 1.0, 1.2, M(0x050505, { roughness: 0.15, metalness: 0.3 }), X(-24), 0.6, Z(-14.5), { collide: false });
+  for (const [gx, gz] of [[-33, -6], [-33, 6], [-14, -6], [-14, 6]]) { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 5, 16), mGold); c.position.set(X(gx), 2.5, Z(gz)); scene.add(c); colliders.push({ minX: X(gx) - .5, maxX: X(gx) + .5, minZ: Z(gz) - .5, maxZ: Z(gz) + .5, minY: 0, maxY: 5 }); solids.push(c); }
+  // ---- Sea Lounge tables, reception desk, atrium sofas
+  for (const [tx, tz] of [[-28, 20], [-16, 20], [-8, 22], [8, 22], [16, 19], [28, 20]]) addBox(1.6, 0.8, 1.6, M(0xf0e8d8), X(tx), 0, Z(tz));
+  addBox(1.4, 1.2, 9, mWood, X(22), 0, Z(0));
+  for (const [sx, sz] of [[-4, -6], [4, 6]]) addBox(2.8, 0.9, 1, M(0x3a4a6a), X(sx), 0, Z(sz));
+  const rt = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.8, 20), mWood); rt.position.set(X(0), 0.4, Z(0)); scene.add(rt);
+  // cover: luggage trolleys & toppled furniture from the attack
+  for (const [cx, cz, f] of [[-2, -20, 0], [10, -20, 0], [-20, 13.5, 1], [3, -14, 1], [-10, 14, 2], [5, -14, 2], [26, 13.5, 2], [-26, -14, 1]]) addBox(1.8, 1.05, 0.9, M(0x5a3a20), X(cx), f * FLOOR_H, Z(cz));
+  // ---- machine-gun nest on the 2nd-floor north gallery (covers the stairs & atrium)
+  const sand = M(0x8f7d5a, { roughness: 1 });
+  addBox(5, 1.15, 1, sand, X(0), 10, Z(13)); addBox(1, 1.15, 2.4, sand, X(-3), 10, Z(14)); addBox(1, 1.15, 2.4, sand, X(3), 10, Z(14));
+  // ---- chandeliers & lights (a light per area keeps it cheap on low-end PCs)
+  const glow = new THREE.MeshStandardMaterial({ color: 0xffe9b8, emissive: 0xffd28a, emissiveIntensity: 3 });
+  const chandelier = (x, y, z, r) => { const g = new THREE.Group(); const core = new THREE.Mesh(new THREE.SphereGeometry(r * 0.35, 12, 10), glow); g.add(core); for (let i = 0; i < 10; i++) { const a = i / 10 * Math.PI * 2; const b = new THREE.Mesh(new THREE.SphereGeometry(r * 0.12, 8, 6), glow); b.position.set(Math.cos(a) * r, -r * 0.3, Math.sin(a) * r); g.add(b); } const ch = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.5, 4), M(0x8a7040)); ch.position.y = 0.8; g.add(ch); g.position.set(X(x), y, Z(z)); scene.add(g); };
+  for (const [x, z, f, r, I] of [[-24, -6, 0, 0.9, 16], [-24, 6, 0, 0.9, 0], [0, 0, 0, 1.2, 18], [0, -20, 0, 0.6, 10], [0, 20, 0, 0.6, 10], [26, 0, 0, 0.6, 9], [0, 14, 1, 0.4, 9], [0, -14, 1, 0.4, 9], [0, -14, 2, 0.4, 9], [-24, 0, 1, 0.4, 8], [26, 0, 2, 0.4, 8]]) {
+    const y = f * FLOOR_H + FLOOR_H - 0.9; chandelier(x, y, z, r);
+    if (I) { const l = new THREE.PointLight(0xffd8a0, I, 22, 1.6); l.position.set(X(x), y - 0.4, Z(z)); l.visible = false; l.userData.base = I; scene.add(l); interiorLights.push(l); }
+  }
+  // ---- fires (the heritage wing burned on the night of 26/11)
+  for (const [fx, fz, f] of [[-28, 21, 1], [28, -21, 2], [-30, 8, 0]]) {
+    const y = f * FLOOR_H, g = new THREE.Group(); scene.add(g); emitter(g, X(fx), y + 0.5, Z(fz), 18, true); emitter(g, X(fx), y + 2, Z(fz), 10, false);
+    const l = new THREE.PointLight(0xff6020, 18, 16, 1.6); l.position.set(X(fx), y + 1.5, Z(fz)); l.visible = false; scene.add(l); interiorLights.push(l); fires.push(l);
   }
 }
 buildInterior();
+// highest walkable surface under (x,z) that can be stepped onto from height y
+const STEP = 0.45;
+function groundAt(x, z, y) {
+  let h = 0;
+  for (const c of colliders) if (x >= c.minX && x <= c.maxX && z >= c.minZ && z <= c.maxZ && c.maxY <= y + STEP + 0.01 && c.maxY > h) h = c.maxY;
+  return h;
+}
+
 
 // ============================================================ MARKERS
 function makeMarker(color) {
@@ -542,7 +751,7 @@ function connect(room, name) {
 }
 function addPeer(id, name) {
   if (net.peers.has(id)) return;
-  const model = makeHuman({ shirt: 0x2b3523, vest: 0x1c241a, head: 0x111111, tag: name });
+  const model = makeHuman({ shirt: 0x2b3523, vest: 0x1c241a, head: 0x111111, tag: name, modelTint: 0x9aa890 });
   model.visible = false; scene.add(model);
   net.peers.set(id, { id, name, model, pos: new THREE.Vector3(), target: new THREE.Vector3(), yaw: 0, hp: 100, down: false, dead: false, phase: 'menu', inZone: false, t: 0 });
   toast(`${name} joined the squad`);
@@ -561,6 +770,8 @@ function onNet(m) {
     case 'boom': explosionFx(new THREE.Vector3(...m.p), m.r); applyBlast(new THREE.Vector3(...m.p), m.r, m.d, false); break;
     case 'nade': throwNade(new THREE.Vector3(...m.p), new THREE.Vector3(...m.v), false, m.k || 'frag'); break;
     case 'brief': startBrief(); break;
+    case 'ping': addPing(new THREE.Vector3(...m.p), p ? p.name : 'Squad'); break;
+    case 'say': say(String(m.txt).slice(0, 80), p ? p.name : 'Squad', '#ffd27a'); break;
     case 'hostage': setHostage(m.id, m.s, false); break;
     case 'revive': if (me.down && !me.dead) { me.down = false; me.hp = 35; toast(`${p ? p.name : 'Teammate'} revived you!`); } break;
     case 'end': endGame(m.win, m.r, false); break;
@@ -568,12 +779,13 @@ function onNet(m) {
 }
 
 // ============================================================ ENEMIES & HOSTAGES
-const ENEMY_DEFS = [
-  ['rifle', 26, 16], ['rifle', -24, 15], ['bomber', 0, 0], ['rifle', -25, 6], ['rifle', -20, -5],
-  ['bomber', 25, 7], ['rifle', 25, -6], ['rifle', -28, -20], ['bomber', 28, -22], ['boss', 0, -28],
+const ENEMY_DEFS = [ // [type, x, z, floor] — the squad is never told where these are
+  ['rifle', -25, 5, 0], ['rifle', 12, 21, 0], ['bomber', 27, -5, 0],
+  ['rifle', -18, 21, 1], ['rifle', -25, -6, 1], ['bomber', 6, -21, 1], ['rifle', -10, 14, 1],
+  ['rifle', 27, 6, 2], ['bomber', 18, 21, 2], ['boss', 0, 14.5, 2],
 ];
-const enemies = ENEMY_DEFS.map(([type, x, z], id) => {
-  const model = makeHuman({ shirt: type === 'bomber' ? 0x3a3a3a : 0x2a2a2a, pants: 0x3b3b44, vest: type === 'bomber' ? 0x6a5a2a : 0x1a1a1a, head: 0x101010 });
+const enemies = ENEMY_DEFS.map(([type, x, z, floor], id) => {
+  const model = makeHuman({ shirt: type === 'bomber' ? 0x3a3a3a : 0x2a2a2a, pants: 0x3b3b44, vest: type === 'bomber' ? 0x6a5a2a : 0x1a1a1a, head: 0x101010, modelTint: type === 'bomber' ? 0x6a5a48 : 0x3a3a3a });
   if (type === 'bomber') { // explosive vest with blinking light
     const led = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), new THREE.MeshStandardMaterial({ emissive: 0xff0000, emissiveIntensity: 5 })); led.position.set(0, 1.3, 0.2); model.add(led); model.userData.led = led;
   }
@@ -584,16 +796,16 @@ const enemies = ENEMY_DEFS.map(([type, x, z], id) => {
     for (const a of [0, 2.1, 4.2]) { const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.4, 6), metal); leg.position.set(Math.sin(a) * 0.4, 0.6, 0.6 + Math.cos(a) * 0.4); leg.rotation.set(Math.cos(a) * 0.4, 0, -Math.sin(a) * 0.4); mg.add(leg); }
     model.add(mg);
   }
-  model.position.set(IN.x + x, 0, IN.z + z); model.rotation.y = type === 'boss' ? 0 : rand(0, 6.28);
+  model.position.set(IN.x + x, floor * FLOOR_H, IN.z + z); model.rotation.y = type === 'boss' ? Math.PI : rand(0, 6.28);
   model.traverse(o => { if (o.isMesh) o.userData.enemy = id; });
   scene.add(model);
   const hp = type === 'boss' ? 750 : type === 'bomber' ? 80 : 100;
   return { id, type, model, hp, max: hp, alive: true, alert: false, seen: 0, lastSeen: null, fireT: 0, burst: 0, armed: -1, home: model.position.clone(), patrolT: rand(0, 5), lastSeenByPlayer: 0, deadAnim: 0 };
 });
-const HOSTAGE_DEFS = [[-35, 6], [-32, -6], [35, 9], [36, -7], [-35, -28], [34, -30], [14, 27], [-5, -18]];
-const hostages = HOSTAGE_DEFS.map(([x, z], id) => {
+const HOSTAGE_DEFS = [[-30, -8, 0], [-28, 22, 1], [30, -22, 1], [-28, 6, 1], [-6, -22, 2], [30, -6, 2], [-30, -22, 2], [6, 22, 2]];
+const hostages = HOSTAGE_DEFS.map(([x, z, f], id) => {
   const m = makeHuman({ shirt: [0xf0f0f0, 0xc04040, 0x4060c0, 0xe0c080][id % 4], pants: 0x222244, vest: [0xf0f0f0, 0xc04040, 0x4060c0, 0xe0c080][id % 4], head: 0x111111, gun: false });
-  m.scale.y = 0.62; m.position.set(IN.x + x, 0, IN.z + z); m.rotation.y = rand(0, 6);
+  m.position.set(IN.x + x, f * FLOOR_H, IN.z + z); m.rotation.y = rand(0, 6);
   m.userData.armL.rotation.x = -3; m.userData.armR.rotation.x = -3;
   m.traverse(o => { if (o.isMesh) o.userData.hostage = id; }); scene.add(m);
   return { id, model: m, state: 'held' }; // held | rescued | dead
@@ -602,7 +814,7 @@ let hostageDeaths = 0, rescued = 0;
 function setHostage(id, s, broadcast = true) {
   const h = hostages[id]; if (!h || h.state !== 'held') return;
   h.state = s; h.model.visible = s === 'held' ? true : false;
-  if (s === 'dead') { hostageDeaths++; toast(`A hostage was killed! (${hostageDeaths}/3)`, '#f55'); blood(h.model.position.clone().setY(1)); if (hostageDeaths >= 3 && net.host) endGame(false, 'Three hostages died. Command has aborted the operation.'); }
+  if (s === 'dead') { hostageDeaths++; toast(`A hostage was killed! (${hostageDeaths}/3)`, '#f55'); blood(h.model.position.clone().addY(1)); if (hostageDeaths >= 3 && net.host) endGame(false, 'Three hostages died. Command has aborted the operation.'); }
   if (s === 'rescued') { rescued++; toast(`Hostage evacuated (${rescued}/${hostages.length})`, '#6f6'); }
   if (broadcast) nsend({ t: 'hostage', id, s });
 }
@@ -635,22 +847,22 @@ function killEnemy(e) {
   toast(left ? `Hostile neutralised — ${left} remaining` : 'ALL HOSTILES NEUTRALISED', '#ffd21f');
 }
 function applyBlast(p, r, dmg, hostSide = true) {
-  const d = me.pos.clone().setY(1).distanceTo(p);
-  if (inside && d < r && lineOfSight(p.clone().setY(1.2), me.pos.clone().setY(1.2))) hurt(dmg * (1 - d / r));
+  const d = me.pos.clone().addY(1).distanceTo(p);
+  if (inside && d < r && lineOfSight(p.clone().addY(1.2), me.pos.clone().addY(1.2))) hurt(dmg * (1 - d / r));
   if (hostSide && net.host) {
     for (const e of enemies) if (e.alive && e.model.position.distanceTo(p) < r) damageEnemy(e.id, dmg * (1 - e.model.position.distanceTo(p) / r), false);
     for (const h of hostages) if (h.state === 'held' && h.model.position.distanceTo(p) < r * 0.8) setHostage(h.id, 'dead');
   }
 }
 function applyEnemySnapshot(list) {
-  for (const [id, x, z, ry, alive, armed, hp] of list) {
-    const e = enemies[id]; e.model.position.x += (x - e.model.position.x) * 0.5; e.model.position.z += (z - e.model.position.z) * 0.5; e.model.rotation.y = ry;
+  for (const [id, x, z, y, ry, alive, armed, hp] of list) {
+    const e = enemies[id]; e.model.position.x += (x - e.model.position.x) * 0.5; e.model.position.z += (z - e.model.position.z) * 0.5; e.model.position.y = y; e.model.rotation.y = ry;
     e.hp = hp; e.armed = armed; if (e.alive && !alive) { e.alive = false; e.deadAnim = 0.001; }
   }
 }
 function enemyShoot(e, target) {
-  const from = e.model.position.clone().setY(1.4);
-  const to = target.pos.clone().setY(1.2 + rand(-0.4, 0.4));
+  const from = e.model.position.clone().addY(1.4);
+  const to = target.pos.clone().addY(1.2 + rand(-0.4, 0.4));
   const dist = from.distanceTo(to);
   const moving = target.local ? me.vel.length() > 2 : true;
   const base = e.type === 'boss' ? 0.38 : 0.55;
@@ -664,26 +876,26 @@ function enemyShoot(e, target) {
   // stray rounds can kill hostages
   for (const h of hostages) if (h.state === 'held' && !hit && h.model.position.distanceTo(to) < 1.0 && Math.random() < 0.3) setHostage(h.id, 'dead');
 }
-function moveWithCollision(pos, dx, dz, r = 0.4) { pos.x += dx; pos.z += dz; collide(pos, r); }
+function moveWithCollision(pos, dx, dz, r = 0.4) { pos.x += dx; pos.z += dz; collide(pos, r); pos.y = groundAt(pos.x, pos.z, pos.y); }
 function updateEnemiesHost(dt) {
   const players = allPlayers();
   for (const e of enemies) {
     const m = e.model;
     if (!e.alive) {
-      if (e.armed > 0) { e.armed -= dt; if (Math.floor(e.armed * 8) % 2 === 0) sfx('beep', m.position, 0.9); if (e.armed <= 0) { e.armed = -2; const p = m.position.clone().setY(1); explosionFx(p, 9); applyBlast(p, 9, 140); nsend({ t: 'boom', p: p.toArray(), r: 9, d: 140 }); m.visible = false; } }
+      if (e.armed > 0) { e.armed -= dt; if (Math.floor(e.armed * 8) % 2 === 0) sfx('beep', m.position, 0.9); if (e.armed <= 0) { e.armed = -2; const p = m.position.clone().addY(1); explosionFx(p, 9); applyBlast(p, 9, 140); nsend({ t: 'boom', p: p.toArray(), r: 9, d: 140 }); m.visible = false; } }
       continue;
     }
     if (e.stun > 0) { e.stun -= dt; m.rotation.y += dt * 2; e.seen = 0; continue; } // flashbanged
     // find visible target
     let best = null, bd = 1e9;
-    const eye = m.position.clone().setY(1.6);
+    const eye = m.position.clone().addY(1.6);
     for (const p of players) {
       if (!p.alive) continue; const d = p.pos.distanceTo(m.position);
       if (d > (e.type === 'boss' ? 60 : 48)) continue;
       const fwd = new THREE.Vector3(Math.sin(m.rotation.y), 0, Math.cos(m.rotation.y));
       const dir = p.pos.clone().sub(m.position).setY(0).normalize();
       if (!e.alert && fwd.dot(dir) < -0.1 && d > 6) continue;
-      if (!lineOfSight(eye, p.pos.clone().setY(1.5))) continue;
+      if (!lineOfSight(eye, p.pos.clone().addY(1.5))) continue;
       if (d < bd) { bd = d; best = p; }
     }
     if (best) {
@@ -694,7 +906,7 @@ function updateEnemiesHost(dt) {
         const dir = best.pos.clone().sub(m.position).setY(0).normalize();
         moveWithCollision(m.position, dir.x * 4.2 * dt, dir.z * 4.2 * dt);
         if (bd < 3.5 && e.armed < 0) { e.armed = 1.2; toast('VEST ARMED — GET BACK!', '#f33'); }
-        if (e.armed > 0) { e.armed -= dt; if (Math.floor(e.armed * 10) % 2 === 0) sfx('beep', m.position); if (e.armed <= 0) { e.alive = false; e.armed = -2; const p = m.position.clone().setY(1); explosionFx(p, 9); applyBlast(p, 9, 140); nsend({ t: 'boom', p: p.toArray(), r: 9, d: 140 }); m.visible = false; const left = enemies.filter(x => x.alive).length; toast(`Bomber detonated — ${left} remaining`, '#f80'); } }
+        if (e.armed > 0) { e.armed -= dt; if (Math.floor(e.armed * 10) % 2 === 0) sfx('beep', m.position); if (e.armed <= 0) { e.alive = false; e.armed = -2; const p = m.position.clone().addY(1); explosionFx(p, 9); applyBlast(p, 9, 140); nsend({ t: 'boom', p: p.toArray(), r: 9, d: 140 }); m.visible = false; const left = enemies.filter(x => x.alive).length; toast(`Bomber detonated — ${left} remaining`, '#f80'); } }
       } else if (e.seen > (e.type === 'boss' ? 0.4 : 0.7)) {
         e.fireT -= dt;
         if (e.fireT <= 0) {
@@ -712,7 +924,7 @@ function updateEnemiesHost(dt) {
       // squad is hiding behind cover → flush them out with a grenade
       e.nadeT = (e.nadeT ?? rand(6, 12)) - dt;
       if (e.type === 'rifle' && e.alert && e.lastSeen && e.nadeT <= 0 && e.lastSeen.distanceTo(m.position) < 22 && e.lastSeen.distanceTo(m.position) > 5) {
-        e.nadeT = rand(12, 20); const T = 1.1, from = m.position.clone().setY(1.6), tgt = e.lastSeen.clone().add(new THREE.Vector3(rand(-1.5, 1.5), 0, rand(-1.5, 1.5)));
+        e.nadeT = rand(12, 20); const T = 1.1, from = m.position.clone().addY(1.6), tgt = e.lastSeen.clone().add(new THREE.Vector3(rand(-1.5, 1.5), 0, rand(-1.5, 1.5)));
         const v = tgt.sub(from).divideScalar(T); v.y += 0.5 * 14 * T; throwNade(from, v, true, 'efrag'); toast('GRENADE! — MOVE!', '#f33');
       }
       if (e.type !== 'boss') {
@@ -730,7 +942,7 @@ function updateEnemiesVisual(dt) {
   for (const e of enemies) {
     const m = e.model, u = m.userData;
     if (u.led) u.led.material.emissiveIntensity = e.armed > 0 ? (Math.sin(performance.now() / 40) > 0 ? 10 : 0) : 2;
-    if (!e.alive && e.deadAnim > 0 && e.deadAnim < 1) { e.deadAnim = Math.min(1, e.deadAnim + dt * 2.5); m.rotation.x = -e.deadAnim * Math.PI / 2; m.position.y = e.deadAnim * 0.25; m.traverse(o => { if (o.isMesh) o.userData.enemy = undefined; }); }
+    if (!e.alive && e.deadAnim > 0 && e.deadAnim < 1) { e.deadAnim = Math.min(1, e.deadAnim + dt * 2.5); m.rotation.x = -e.deadAnim * Math.PI / 2; m.userData.dead = true; if (!m.userData.baseY) m.userData.baseY = m.position.y; m.position.y = m.userData.baseY + e.deadAnim * 0.25; m.traverse(o => { if (o.isMesh) o.userData.enemy = undefined; }); }
     if (e.alive) { const s = Math.sin(performance.now() / 150 + e.id) * 0.3; u.legL.rotation.x = s; u.legR.rotation.x = -s; }
   }
 }
@@ -738,7 +950,7 @@ function updateEnemiesVisual(dt) {
 // ============================================================ COLLISION
 function collide(pos, r) {
   for (const c of colliders) {
-    if (pos.y > c.maxY - 0.01 || pos.y + 1.8 < c.minY) continue;
+    if (pos.y > c.maxY - 0.01 || pos.y + 1.8 < c.minY || c.maxY - pos.y <= STEP) continue;
     const cx = clamp(pos.x, c.minX, c.maxX), cz = clamp(pos.z, c.minZ, c.maxZ);
     const dx = pos.x - cx, dz = pos.z - cz, d2 = dx * dx + dz * dz;
     if (d2 < r * r) {
@@ -803,14 +1015,14 @@ function detonate(kind, bp) {
     // blind local player if close and looking at it
     const eye = camera.getWorldPosition(new THREE.Vector3()), to = bp.clone().sub(eye), d = to.length();
     const facing = to.normalize().dot(new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion));
-    if (inside && d < 14 && lineOfSight(bp.clone().setY(0.6), eye)) { const a = clamp((1 - d / 14) * (facing > 0.3 ? 1.3 : 0.5), 0, 1); const f = $('flashbang'); f.style.transition = 'none'; f.style.opacity = a; setTimeout(() => { f.style.transition = 'opacity 3.5s'; f.style.opacity = 0; }, 900); }
-    if (net.host) for (const e of enemies) if (e.alive && e.model.position.distanceTo(bp) < 12 && lineOfSight(bp.clone().setY(0.6), e.model.position.clone().setY(1.6))) { e.stun = e.type === 'boss' ? 2.5 : 4.5; e.alert = true; }
+    if (inside && d < 14 && lineOfSight(bp.clone().addY(0.6), eye)) { const a = clamp((1 - d / 14) * (facing > 0.3 ? 1.3 : 0.5), 0, 1); const f = $('flashbang'); f.style.transition = 'none'; f.style.opacity = a; setTimeout(() => { f.style.transition = 'opacity 3.5s'; f.style.opacity = 0; }, 900); }
+    if (net.host) for (const e of enemies) if (e.alive && e.model.position.distanceTo(bp) < 12 && lineOfSight(bp.clone().addY(0.6), e.model.position.clone().addY(1.6))) { e.stun = e.type === 'boss' ? 2.5 : 4.5; e.alert = true; }
     return;
   }
   if (kind === 'smoke') {
     sfx('reload', bp, 1); const g = new THREE.Group(); scene.add(g);
     for (let i = 0; i < 26; i++) { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTex, color: 0xb8bcc0, transparent: true, opacity: 0, depthWrite: false })); sp.position.copy(bp).add(new THREE.Vector3(rand(-3.5, 3.5), rand(0.3, 3.2), rand(-3.5, 3.5))); sp.scale.setScalar(rand(4, 6.5)); sp.userData.o = rand(0.45, 0.75); g.add(sp); }
-    smokes.push({ p: bp.clone().setY(1.5), r: 4.5, t: 16, g });
+    smokes.push({ p: bp.clone().addY(1.5), r: 4.5, t: 16, g });
   }
 }
 function smokeBlocks(a, b) { // does any smoke cloud sit between a and b?
@@ -929,18 +1141,18 @@ $('deploy').onclick = () => {
 };
 function enterInterior() {
   inside = true; phase = 'assault';
-  me.pos.set(IN.x - 3 + (net.id % 4) * 2, 0, IN.z + 29); me.yaw = 0; me.pitch = 0;
+  me.pos.set(IN.x - 3 + (net.id % 4) * 2, 0, IN.z - 22); me.yaw = Math.PI; me.pitch = 0;
   sunLight.visible = false; hemi.intensity = 0.12; scene.fog.density = 0.02; scene.fog.color.set(0x140c08);
   interiorLights.forEach(l => l.visible = true); cityLights.forEach(l => l.visible = false); sky.visible = false; stars.visible = false;
   scene.background = new THREE.Color(0x050302); renderer.toneMappingExposure = 0.55; bloom.threshold = 0.95; bloom.strength = 0.5;
-  objective('Clear the Taj: neutralise all 10 hostiles · rescue hostages (E)');
+  objective('Clear the Taj — 3 floors. Find and neutralise all 10 hostiles. Rescue hostages (E). Your plan.');
   toast('Operation Black Tornado is GO', '#ffd21f');
 }
 let exfilMarker = null;
 function assaultUpdate(dt) {
   const left = enemies.filter(e => e.alive).length;
   if (left === 0 && !exfilMarker) {
-    exfilMarker = makeMarker(0x30ff60); exfilMarker.position.set(IN.x, 0, IN.z + 29); exfilMarker.visible = true;
+    exfilMarker = makeMarker(0x30ff60); exfilMarker.position.set(IN.x, 0, IN.z - 22); exfilMarker.visible = true;
     objective('All hostiles down. Get out alive — EXFIL at the lobby entrance (green)');
   }
   if (exfilMarker && !me.down && me.pos.distanceTo(exfilMarker.position) < 3) endGame(true, '', true);
@@ -973,9 +1185,44 @@ function endGame(win, reason, broadcast = true) {
   $('end').classList.add('show');
 }
 
+// ============================================================ SQUAD COMMS (the team makes its own plan)
+const floorOf = y => clamp(Math.round(y / FLOOR_H), 0, FLOORS - 1);
+const pings = [];
+function addPing(p, who) {
+  const s = textSprite('▼ ' + who, '#ffd21f'); s.position.copy(p).addY(1.4); s.material.depthTest = false; scene.add(s);
+  pings.push({ s, t: 12, p: p.clone() }); sfx('beep', null, 0.4);
+}
+const feedLines = [];
+function say(txt, who = me.name, color = '#9fd4ff') {
+  feedLines.push({ html: `<b style="color:${color}">${who}:</b> ${txt.replace(/</g, '&lt;')}`, t: 14 });
+  while (feedLines.length > 7) feedLines.shift();
+}
+const CALLOUTS = { KeyZ: 'Room clear!', KeyX: 'Moving UPSTAIRS — cover me', KeyC: 'Moving DOWNSTAIRS', KeyV: 'NEED BACKUP at my position!' };
+function squadKey(code) {
+  if (CALLOUTS[code]) { const where = inside ? ` (${FLOOR_NAMES[floorOf(me.pos.y)]})` : ''; say(CALLOUTS[code] + where); nsend({ t: 'say', txt: CALLOUTS[code] + where }); return true; }
+  if (code === 'KeyQ') {
+    ray.setFromCamera(new THREE.Vector2(0, 0), camera); ray.far = 200;
+    const targets = [...solids]; enemies.forEach(e => e.alive && e.model.traverse(o => o.isMesh && o.userData.part && targets.push(o)));
+    const hit = ray.intersectObjects(targets, false)[0]; if (!hit) return true;
+    const enemy = hit.object.userData.enemy !== undefined;
+    addPing(hit.point, me.name); nsend({ t: 'ping', p: hit.point.toArray() });
+    if (enemy) { say('HOSTILE spotted here!', me.name, '#ff8080'); nsend({ t: 'say', txt: 'HOSTILE spotted here!' }); }
+    return true;
+  }
+  if (code === 'KeyY') { const c = $('chat'); c.style.display = 'block'; document.exitPointerLock?.(); setTimeout(() => c.focus(), 0); return true; }
+  return false;
+}
+$('chat').addEventListener('keydown', e => {
+  e.stopPropagation();
+  if (e.key === 'Enter') { const v = e.target.value.trim(); if (v) { say(v); nsend({ t: 'say', txt: v }); } e.target.value = ''; }
+  if (e.key === 'Enter' || e.key === 'Escape') { e.target.style.display = 'none'; e.target.blur(); renderer.domElement.requestPointerLock(); }
+});
+
 // ============================================================ INPUT
 addEventListener('keydown', e => {
+  if (document.activeElement === $('chat')) return;
   keys[e.code] = true;
+  if (phase !== 'menu' && squadKey(e.code)) return;
   if (e.code === 'KeyE' && dialogQ) nextDialog();
   if (e.code === 'KeyR') reload();
   if (e.code === 'Digit1') $('phone').classList.toggle('up');
@@ -1044,6 +1291,8 @@ async function begin(online) {
   if (online) { const ok = await connect($('room').value || 'TAJ', me.name); if (!ok) toast('Could not reach the squad server — playing solo', '#fa0'); }
   buildViewGun('m4'); viewGun.visible = false;
   startStory(); renderer.domElement.requestPointerLock();
+  if (location.hash === '#tajday') { me.pos.set(SPOTS.red.x + 5, 0, SPOTS.red.z + 75); me.yaw = 0.05; me.pitch = 0.22; }
+  if (location.hash === '#colonel') { me.pos.set(SPOTS.handler.x, 0, SPOTS.handler.z + 7); me.yaw = 0; me.pitch = -0.05; }
   if (location.hash === '#taj' || location.hash === '#assault') { // dev shortcuts
     setNight(); fireGroup.visible = true; tajFireLight.intensity = 400; redZoneProps.visible = true; marker.visible = false;
     me.pos.set(SPOTS.red.x + 10, 0, SPOTS.red.z + 40); me.yaw = 0.2; me.pitch = 0.25; phase = 'toRed'; redMarker.position.copy(SPOTS.red); redMarker.visible = true;
@@ -1061,11 +1310,12 @@ function drawMinimap() {
   mm.translate(S / 2, S / 2); mm.rotate(me.yaw);
   const P = (x, z) => [(x - me.pos.x) * sc, (z - me.pos.z) * sc];
   mm.fillStyle = '#ffffff22';
-  for (const c of colliders) { const [x1, z1] = P(c.minX, c.minZ); const [x2, z2] = P(c.maxX, c.maxZ); if (Math.abs(x1) < 200 && Math.abs(z1) < 200) mm.fillRect(x1, z1, x2 - x1, z2 - z1); }
+  for (const c of colliders) { if (inside && (c.maxY < me.pos.y + 0.6 || c.minY > me.pos.y + 1.5 || c.maxY - c.minY < 0.5)) continue; const [x1, z1] = P(c.minX, c.minZ); const [x2, z2] = P(c.maxX, c.maxZ); if (Math.abs(x1) < 200 && Math.abs(z1) < 200) mm.fillRect(x1, z1, x2 - x1, z2 - z1); }
   const dot = (x, z, col, r = 4) => { const [a, b] = P(x, z); mm.fillStyle = col; mm.beginPath(); mm.arc(a, b, r, 0, 7); mm.fill(); };
   if (marker.visible) dot(marker.position.x, marker.position.z, '#ffd21f', 6);
   if (redMarker.visible) dot(redMarker.position.x, redMarker.position.z, '#ff2020', 8);
   if (exfilMarker) dot(exfilMarker.position.x, exfilMarker.position.z, '#3f6', 6);
+  for (const pg of pings) dot(pg.p.x, pg.p.z, '#ffd21f', 5);
   for (const p of net.peers.values()) if (p.model.visible) dot(p.pos.x, p.pos.z, p.down ? '#f80' : '#4af');
   if (inside) for (const e of enemies) if (e.alive && e.seen > 0) dot(e.model.position.x, e.model.position.z, '#f33', 3);
   mm.restore();
@@ -1088,9 +1338,11 @@ function loop() {
     if (keys.Space && me.onGround) { me.vel.y = 5; me.onGround = false; }
   } else { me.vel.x *= 0.8; me.vel.z *= 0.8; }
   me.vel.y -= 14 * dt;
+  if (me.vel.y > 0) for (const c of colliders) if (me.pos.x > c.minX && me.pos.x < c.maxX && me.pos.z > c.minZ && me.pos.z < c.maxZ && me.pos.y + 1.85 > c.minY && me.pos.y + 1.0 < c.minY) { me.vel.y = 0; break; }
   me.pos.x += me.vel.x * dt; me.pos.z += me.vel.z * dt; me.pos.y += me.vel.y * dt;
-  if (me.pos.y <= 0) { me.pos.y = 0; me.vel.y = 0; me.onGround = true; }
   collide(me.pos, 0.4);
+  const gy = groundAt(me.pos.x, me.pos.z, me.pos.y);
+  if (me.pos.y <= gy || (me.onGround && me.vel.y <= 0 && me.pos.y - gy < STEP)) { if (me.vel.y < -14 && phase === 'assault') hurt((-me.vel.y - 14) * 6); me.pos.y = gy; me.vel.y = 0; me.onGround = true; } else me.onGround = false;
   if (!inside) { me.pos.x = clamp(me.pos.x, -230, 240); me.pos.z = clamp(me.pos.z, -158, 280); }
 
   // --- camera
@@ -1118,7 +1370,8 @@ function loop() {
   }
   for (let i = nades.length - 1; i >= 0; i--) {
     const n = nades[i]; n.v.y -= 14 * dt; const prev = n.m.position.clone(); n.m.position.addScaledVector(n.v, dt);
-    if (n.m.position.y < 0.09) { n.m.position.y = 0.09; n.v.y *= -0.35; n.v.x *= 0.6; n.v.z *= 0.6; }
+    const ng = groundAt(n.m.position.x, n.m.position.z, n.m.position.y) + 0.09;
+    if (n.m.position.y < ng) { n.m.position.y = ng; n.v.y *= -0.35; n.v.x *= 0.6; n.v.z *= 0.6; }
     const p = n.m.position.clone(); collide(p, 0.1); if (p.x !== n.m.position.x || p.z !== n.m.position.z) { n.v.x *= -0.4; n.v.z *= -0.4; n.m.position.copy(prev); }
     if (n.kind === 'efrag' && Math.floor(n.t * 6) % 2 === 0) sfx('beep', n.m.position, 0.6);
     n.t -= dt; if (n.t <= 0) { const bp = n.m.position.clone(); scene.remove(n.m); nades.splice(i, 1); detonate(n.kind, bp); }
@@ -1169,7 +1422,7 @@ function loop() {
   // --- story / mission
   if (['toHandler', 'toHome', 'toRed'].includes(phase)) storyUpdate(dt);
   if (phase === 'assault') {
-    if (net.host) { updateEnemiesHost(dt); snapT -= dt; if (snapT <= 0) { snapT = 0.1; nsend({ t: 'e', l: enemies.map(e => [e.id, +e.model.position.x.toFixed(2), +e.model.position.z.toFixed(2), +e.model.rotation.y.toFixed(2), e.alive, +e.armed.toFixed(2), Math.round(e.hp)]) }); } }
+    if (net.host) { updateEnemiesHost(dt); snapT -= dt; if (snapT <= 0) { snapT = 0.1; nsend({ t: 'e', l: enemies.map(e => [e.id, +e.model.position.x.toFixed(2), +e.model.position.z.toFixed(2), +e.model.position.y.toFixed(2), +e.model.rotation.y.toFixed(2), e.alive, +e.armed.toFixed(2), Math.round(e.hp)]) }); } }
     updateEnemiesVisual(dt); assaultUpdate(dt);
   }
   // --- shadows follow the player in the city
@@ -1182,7 +1435,7 @@ function loop() {
     p.pos.lerp(p.target, Math.min(1, dt * 10));
     p.model.position.copy(p.pos); p.model.rotation.y = p.yaw + Math.PI;
     p.model.visible = !!p.inside === inside && !p.dead;
-    p.model.rotation.x = p.down ? -Math.PI / 2.3 : 0; p.model.position.y = p.down ? 0.3 : p.pos.y;
+    p.model.rotation.x = p.down ? -Math.PI / 2.3 : 0; p.model.position.y = p.pos.y + (p.down ? 0.3 : 0);
   }
 
   // --- HUD
@@ -1192,11 +1445,16 @@ function loop() {
   if (phase === 'assault') $('stats').innerHTML = `${WEAPONS[me.weapon].name}<br><span style="font-size:40px">${me.reloading > 0 ? 'RELOADING' : me.ammo}</span> / ${me.reserve}<br><span style="font-size:18px">G Frag ${me.inv.frag} · F Flash ${me.inv.flash} · T Smoke ${me.inv.smoke}</span>`;
   const team = [...net.peers.values()];
   $('team').style.display = team.length || keys.Tab ? 'block' : 'none';
-  $('team').innerHTML = `<b>SQUAD ${net.online ? '(online)' : ''}</b><br>${me.name} (you) — ${me.down ? 'DOWN' : Math.round(me.hp) + ' HP'}` + team.map(p => `<br>${p.name} — ${p.dead ? 'KIA' : p.down ? 'DOWN' : p.hp + ' HP'}`).join('');
+  $('team').innerHTML = `<b>SQUAD ${net.online ? '(online)' : ''}</b><br>${me.name} (you) — ${me.down ? 'DOWN' : Math.round(me.hp) + ' HP'}` + team.map(p => `<br>${p.name} — ${p.dead ? 'KIA' : p.down ? 'DOWN' : p.hp + ' HP'}${p.inside ? ' · ' + FLOOR_NAMES[floorOf(p.pos.y)] : ''}`).join('');
   const d = new Date(2008, 10, 26, night ? 21 : 18, night ? 48 : 30); $('pclock').textContent = $('ptime').textContent = d.toTimeString().slice(0, 5);
   if (phase !== 'menu') drawMinimap();
 
   if (phase === 'menu') { camera.position.set(80 + Math.sin(t * 0.05) * 60, 30, 40); camera.lookAt(TAJ.x, 25, TAJ.z); }
+  updateAnimations(dt);
+  for (let i = pings.length - 1; i >= 0; i--) { const pg = pings[i]; pg.t -= dt; pg.s.material.opacity = Math.min(1, pg.t); if (pg.t <= 0) { scene.remove(pg.s); pings.splice(i, 1); } }
+  for (let i = feedLines.length - 1; i >= 0; i--) { feedLines[i].t -= dt; if (feedLines[i].t <= 0) feedLines.splice(i, 1); }
+  $('feed').innerHTML = feedLines.map(l => `<div style="opacity:${Math.min(1, l.t / 2)}">${l.html}</div>`).join('');
+  $('floor').textContent = inside ? FLOOR_NAMES[floorOf(me.pos.y)] : '';
   watchFps(dt);
   grade.uniforms.time.value = t % 100;
   composer.render();

@@ -60,7 +60,7 @@
 </head>
 <body>
 <div id="menu" class="ov show">
-  <h1>OPERATION BLACK TORNADO</h1>
+  <h1>OPERATION BLACK TORNADO</h1><div id="menuStatus" class="small" style="color:#f3c34b;height:18px"></div>
   <div class="small" style="margin-bottom:20px">Mumbai · 26 November 2008 · Co-op tactical mission (1–4 players)</div>
   <div class="panel">
     <input id="name" placeholder="Your call-sign" maxlength="16">
@@ -70,13 +70,16 @@
       <option value="medium">Medium</option><option value="high">High</option><option value="ultra">Ultra (gaming PCs)</option></select></label><br>
     <button id="play">JOIN SQUAD</button><button id="solo" class="alt">PLAY SOLO</button>
     <p class="small">WASD move · Shift sprint · Mouse aim · Click fire · Right-click aim/scope<br>
-    R reload · G frag · F flashbang · T smoke · E interact / revive teammate · 1 phone · Tab team</p>
+    R reload · G frag · F flashbang · T smoke · Q ping · Z/X/C/V callouts · Y chat · E interact / revive teammate · 1 phone · Tab team</p>
   </div>
 </div>
 
 <div id="hud">
   <div id="dmg"></div><div id="flashbang" style="position:absolute;inset:0;background:#fff;opacity:0"></div><div id="scope"></div><div id="cross"></div>
   <div id="obj"></div><div id="team"></div><div id="msg"></div><div id="hint"></div>
+  <div id="feed" style="position:absolute;left:24px;bottom:240px;width:360px;font-size:15px;line-height:1.5;text-shadow:0 1px 3px #000"></div>
+  <div id="floor" style="position:absolute;left:204px;bottom:56px;font-family:Oswald;font-size:22px"></div>
+  <input id="chat" maxlength="80" placeholder="Squad chat — Enter to send" style="position:absolute;left:24px;bottom:210px;width:360px;display:none;pointer-events:auto">
   <canvas id="minimap" width="170" height="170"></canvas>
   <div id="hpbar"><div id="hp"></div></div>
   <div id="stats"></div>
@@ -96,7 +99,7 @@
   <div class="panel" style="max-width:640px">
     <h2>CHOOSE YOUR ROLE</h2>
     <div class="guns" id="guns"></div>
-    <p class="small">Plan with your squad. Hostages are inside &mdash; check your fire.<br>Some hostiles carry explosive vests: back off when you hear the beeping.</p>
+    <p class="small">No one will tell you where they are. Split the floors, check every room, cover each other.<br>Q ping a spot · Z "Room clear" · X "Going upstairs" · C "Going downstairs" · V "Need backup" · Y chat<br>Plan with your squad. Hostages are inside &mdash; check your fire.<br>Some hostiles carry explosive vests: back off when you hear the beeping.</p>
     <button id="deploy">DEPLOY</button>
   </div>
 </div>
