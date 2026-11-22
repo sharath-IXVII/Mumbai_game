@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Operation Black Tornado</title>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:Inter,sans-serif;color:#eee}
+  canvas{display:block}
+  .ov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;z-index:10}
+  .show{display:flex}
+  h1{font-family:Oswald;font-size:56px;letter-spacing:4px;margin:0;color:#f3c34b;text-shadow:0 0 30px #a6610088}
+  h2{font-family:Oswald;letter-spacing:2px;color:#f3c34b;margin:6px 0 18px}
+  #menu{background:radial-gradient(ellipse at center,#1a1410 0%,#000 75%)}
+  .panel{background:#0009;border:1px solid #f3c34b55;padding:24px 28px;border-radius:6px;min-width:340px;text-align:center}
+  input{background:#111;border:1px solid #555;color:#fff;padding:10px;width:100%;margin:6px 0;font-size:16px}
+  button{font-family:Oswald;font-size:18px;letter-spacing:1px;background:#f3c34b;color:#000;border:0;padding:12px 22px;margin:8px 4px;cursor:pointer;border-radius:3px}
+  button.alt{background:#333;color:#eee}
+  .small{font-size:13px;color:#aaa;line-height:1.6}
+  #hud{position:fixed;inset:0;pointer-events:none;z-index:5;display:none}
+  #cross{position:absolute;left:50%;top:50%;width:22px;height:22px;margin:-11px;}
+  #cross:before,#cross:after{content:"";position:absolute;background:#fff;opacity:.85}
+  #cross:before{left:10px;top:0;width:2px;height:22px}#cross:after{top:10px;left:0;height:2px;width:22px}
+  #scope{position:absolute;inset:0;display:none;background:radial-gradient(circle at center,transparent 0 32vh,#000 32.3vh)}
+  #scope:after{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:#000}
+  #scope:before{content:"";position:absolute;top:0;bottom:0;left:50%;width:1px;background:#000}
+  #obj{position:absolute;top:18px;left:18px;font-family:Oswald;font-size:20px;background:#0008;padding:8px 14px;border-left:4px solid #f3c34b;max-width:46vw}
+  #stats{position:absolute;bottom:20px;right:24px;font-family:Oswald;font-size:26px;text-align:right}
+  #hpbar{position:absolute;bottom:24px;left:24px;width:260px;height:14px;background:#0008;border:1px solid #fff4}
+  #hp{height:100%;background:linear-gradient(90deg,#c0262d,#3fbf5f);width:100%}
+  #team{position:absolute;top:18px;right:18px;font-size:14px;background:#0008;padding:8px 12px;line-height:1.6}
+  #msg{position:absolute;top:30%;width:100%;text-align:center;font-family:Oswald;font-size:30px;text-shadow:0 2px 8px #000}
+  #hint{position:absolute;bottom:80px;width:100%;text-align:center;font-size:18px;text-shadow:0 2px 6px #000}
+  #dmg{position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 40%,#c00 120%);opacity:0;transition:opacity .25s}
+  #minimap{position:absolute;bottom:52px;left:24px;width:170px;height:170px;border-radius:50%;border:2px solid #fff5;background:#0007}
+  #phone{position:fixed;right:30px;bottom:-560px;width:270px;height:520px;background:#111;border:10px solid #222;border-radius:34px;z-index:20;transition:bottom .6s;padding:40px 16px;box-shadow:0 0 40px #000}
+  #phone.up{bottom:30px}
+  #phone .bar{font-size:12px;color:#aaa;display:flex;justify-content:space-between}
+  #phone .alert{margin-top:24px;background:#b3121c;padding:14px;border-radius:12px;font-size:14px;line-height:1.5;animation:pulse 1s infinite}
+  @keyframes pulse{50%{box-shadow:0 0 22px #f33}}
+  #cine{background:#000;z-index:30}
+  #cine p{font-family:Oswald;font-size:26px;max-width:900px;text-align:center;line-height:1.5;opacity:0;transition:opacity 1.2s;padding:0 20px}
+  #cine p.on{opacity:1}
+  .guns{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:10px 0}
+  .gun{background:#151515;border:1px solid #444;padding:14px;cursor:pointer;text-align:left;border-radius:4px}
+  .gun:hover,.gun.sel{border-color:#f3c34b;background:#221c0c}
+  .gun b{font-family:Oswald;font-size:20px;color:#f3c34b}
+  #dialog{position:fixed;bottom:110px;left:50%;transform:translateX(-50%);width:min(760px,92vw);background:#000c;border:1px solid #f3c34b66;padding:16px 20px;z-index:15;display:none;font-size:17px;line-height:1.5}
+  #dialog .who{font-family:Oswald;color:#f3c34b;font-size:18px}
+  #end h1{font-size:64px}
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three.module.js",
+  "three/addons/": "./vendor/jsm/"
+}}
+</script>
+</head>
+<body>
+<div id="menu" class="ov show">
+  <h1>OPERATION BLACK TORNADO</h1>
+  <div class="small" style="margin-bottom:20px">Mumbai · 26 November 2008 · Co-op tactical mission (1–4 players)</div>
+  <div class="panel">
+    <input id="name" placeholder="Your call-sign" maxlength="16">
+    <input id="room" placeholder="Squad room code (share with friends)" maxlength="12" value="TAJ">
+    <button id="play">JOIN SQUAD</button><button id="solo" class="alt">PLAY SOLO</button>
+    <p class="small">WASD move · Shift sprint · Mouse aim · Click fire · Right-click aim/scope<br>
+    R reload · G grenade · E interact / revive teammate · 1 phone · Tab team</p>
+  </div>
+</div>
+
+<div id="hud">
+  <div id="dmg"></div><div id="scope"></div><div id="cross"></div>
+  <div id="obj"></div><div id="team"></div><div id="msg"></div><div id="hint"></div>
+  <canvas id="minimap" width="170" height="170"></canvas>
+  <div id="hpbar"><div id="hp"></div></div>
+  <div id="stats"></div>
+</div>
+
+<div id="dialog"><div class="who"></div><div class="txt"></div><div class="small" style="margin-top:6px">[click / E to continue]</div></div>
+
+<div id="phone"><div class="bar"><span>NSG-SECURE</span><span id="ptime">21:48</span></div>
+  <div style="text-align:center;margin-top:30px;font-family:Oswald;font-size:40px" id="pclock">21:48</div>
+  <div class="small" style="text-align:center">Wednesday, 26 November</div>
+  <div class="alert" id="palert">No new messages.</div>
+</div>
+
+<div id="cine" class="ov"><p id="cinetext"></p><div class="small" style="position:absolute;bottom:30px">Click to skip</div></div>
+
+<div id="loadout" class="ov" style="background:#000d">
+  <div class="panel" style="max-width:640px">
+    <h2>CHOOSE YOUR ROLE</h2>
+    <div class="guns" id="guns"></div>
+    <p class="small">Plan with your squad. Hostages are inside &mdash; check your fire.<br>Some hostiles carry explosive vests: back off when you hear the beeping.</p>
+    <button id="deploy">DEPLOY</button>
+  </div>
+</div>
+
+<div id="end" class="ov" style="background:#000e"><h1 id="endT"></h1><p id="endS" class="small" style="font-size:18px;max-width:700px;text-align:center"></p><button onclick="location.reload()">PLAY AGAIN</button></div>
+
+<script type="module" src="game.js"></script>
+</body>
+</html>
