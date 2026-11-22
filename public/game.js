@@ -4,6 +4,8 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Sky } from 'three/addons/objects/Sky.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
 
 const $ = id => document.getElementById(id);
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -22,11 +24,35 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 1500);
 scene.add(camera);
-const composer = new EffectComposer(renderer);
+// HDR render target with 4x MSAA (anti-aliasing survives post-processing)
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, samples: 4 }));
 composer.addPass(new RenderPass(scene, camera));
+// Ambient occlusion: contact shadows in corners & under objects (High/Ultra only)
+const ssao = new SSAOPass(scene, camera, innerWidth, innerHeight);
+ssao.kernelRadius = 0.6; ssao.minDistance = 0.0006; ssao.maxDistance = 0.03; ssao.enabled = false;
+composer.addPass(ssao);
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.6, 0.5, 0.85);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
+// GTA-IV style cinematic grade: desaturated amber/teal look, contrast curve, vignette, film grain, lens fringing
+const grade = new ShaderPass({
+  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, sat: { value: 0.78 }, tint: { value: new THREE.Vector3(1.06, 1.0, 0.86) }, shadowTint: { value: new THREE.Vector3(0.92, 0.98, 1.08) }, grainAmt: { value: 0.05 }, vig: { value: 0.42 }, ca: { value: 0.0012 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float time, sat, grainAmt, vig, ca; uniform vec3 tint, shadowTint; varying vec2 vUv;
+    float rnd(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233)) + time) * 43758.5453); }
+    void main(){
+      vec2 d = vUv - 0.5; float r2 = dot(d,d);
+      vec3 c; c.r = texture2D(tDiffuse, vUv + d*ca*r2*8.0).r; c.g = texture2D(tDiffuse, vUv).g; c.b = texture2D(tDiffuse, vUv - d*ca*r2*8.0).b;
+      float l = dot(c, vec3(0.299,0.587,0.114));
+      c = mix(vec3(l), c, sat);                                  // desaturate
+      c *= mix(shadowTint, tint, smoothstep(0.0, 0.6, l));       // cool shadows, warm highlights
+      c = c*c*(3.0-2.0*c)*0.35 + c*0.65;                         // S-curve contrast
+      c *= 1.0 - vig * smoothstep(0.1, 0.7, r2*2.0);             // vignette
+      c += (rnd(vUv*vec2(1920.,1080.)) - 0.5) * grainAmt;        // film grain
+      gl_FragColor = vec4(c, 1.0);
+    }`,
+});
+composer.addPass(grade);
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
@@ -68,6 +94,9 @@ const stars = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMater
 scene.add(stars);
 function setNight() {
   night = true;
+  // wet night streets: glossy asphalt with puddles mirroring the lights
+  ground.material.roughnessMap = puddleTex; ground.material.roughness = 1; ground.material.metalness = 0.15; ground.material.color.set(0x8a8a8a); ground.material.needsUpdate = true;
+  grade.uniforms.sat.value = 0.72; grade.uniforms.tint.value.set(1.1, 0.98, 0.82); grade.uniforms.shadowTint.value.set(0.85, 0.95, 1.15);
   su.rayleigh.value = 0.4; su.turbidity.value = 2;
   setSky(-6, 250);
   scene.environmentIntensity = 0.25;
@@ -93,7 +122,10 @@ function grain(ctx, w, h, base, v, n = 9000) {
   ctx.fillStyle = base; ctx.fillRect(0, 0, w, h);
   for (let i = 0; i < n; i++) { const g = rand(-v, v); ctx.fillStyle = `rgba(${g > 0 ? 255 : 0},${g > 0 ? 255 : 0},${g > 0 ? 255 : 0},${Math.abs(g)})`; ctx.fillRect(rand(0, w), rand(0, h), 2, 2); }
 }
-const asphaltTex = canvasTex(512, 512, (c, w, h) => { grain(c, w, h, '#2c2b2a', 0.08, 30000); }, [80, 80]);
+const asphaltTex = canvasTex(512, 512, (c, w, h) => { grain(c, w, h, '#2c2b2a', 0.08, 30000); for (let i = 0; i < 40; i++) { c.strokeStyle = `rgba(0,0,0,${rand(0.2, 0.5)})`; c.lineWidth = rand(1, 3); c.beginPath(); let x = rand(0, w), y = rand(0, h); c.moveTo(x, y); for (let k = 0; k < 6; k++) c.lineTo(x += rand(-20, 20), y += rand(-20, 20)); c.stroke(); } }, [80, 80]);
+// puddle map: dark = wet & glossy (reflects street lights at night, like GTA IV rain-soaked streets)
+const puddleTex = canvasTex(512, 512, (c, w, h) => { c.fillStyle = '#e8e8e8'; c.fillRect(0, 0, w, h); for (let i = 0; i < 26; i++) { const x = rand(0, w), y = rand(0, h), r = rand(20, 70); const g = c.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, '#101010'); g.addColorStop(0.7, '#303030'); g.addColorStop(1, 'rgba(232,232,232,0)'); c.fillStyle = g; c.beginPath(); c.ellipse(x, y, r, r * rand(0.4, 1), rand(0, 3), 0, 7); c.fill(); } }, [40, 40]);
+puddleTex.colorSpace = THREE.NoColorSpace;
 const pavTex = canvasTex(256, 256, (c, w, h) => { grain(c, w, h, '#8d867a', 0.07); c.strokeStyle = '#6d675d'; c.lineWidth = 3; for (let i = 0; i <= 4; i++) { c.beginPath(); c.moveTo(i * 64, 0); c.lineTo(i * 64, h); c.moveTo(0, i * 64); c.lineTo(w, i * 64); c.stroke(); } });
 const marbleTex = canvasTex(512, 512, (c, w, h) => {
   for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) { c.fillStyle = (x + y) % 2 ? '#e9e1d2' : '#2a2421'; c.fillRect(x * 64, y * 64, 64, 64); }
@@ -126,7 +158,7 @@ function facade({ floors, cols, wall = '#b9a58a', glass = '#1d2633', lit = 0.35,
       c.fillRect(x, y, cw * 0.5, fh * 0.58);
     }
   });
-  const m = new THREE.MeshStandardMaterial({ map, emissiveMap: em, emissive: 0xffffff, emissiveIntensity: 0.05, roughness: 0.85, metalness: 0.0 });
+  const m = new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: 3, emissiveMap: em, emissive: 0xffffff, emissiveIntensity: 0.05, roughness: 0.85, metalness: 0.0 });
   windowMats.push(m); return m;
 }
 
@@ -149,7 +181,7 @@ const M = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: 
 
 // ============================================================ MUMBAI (COLABA) CITY
 const cityLights = [];
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(800, 800), new THREE.MeshStandardMaterial({ map: asphaltTex, roughness: 0.92 }));
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(800, 800), new THREE.MeshStandardMaterial({ map: asphaltTex, bumpMap: asphaltTex, bumpScale: 1.5, roughness: 0.92 }));
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
 
 // Arabian Sea / harbour to the north (negative Z)
@@ -166,7 +198,7 @@ for (let i = 0; i < 9; i++) { const b = new THREE.Group(); const hull = new THRE
 
 // Gateway of India
 function gateway(x, z) {
-  const st = new THREE.MeshStandardMaterial({ map: stoneTex, color: 0xf0dcb0, roughness: 0.9 });
+  const st = new THREE.MeshStandardMaterial({ map: stoneTex, bumpMap: stoneTex, bumpScale: 3, color: 0xf0dcb0, roughness: 0.9 });
   stoneTex.repeat.set(2, 4);
   addBox(8, 20, 10, st, x - 10, 0, z); addBox(8, 20, 10, st, x + 10, 0, z);
   addBox(28, 6, 10, st, x, 20, z, { collide: false });
@@ -320,7 +352,7 @@ const IN = { x: 1000, z: 0 }; // interior origin, far from the city
 const interiorLights = [];
 const fires = [];
 function buildInterior() {
-  const wallMat = new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.6, color: 0xd8b48a });
+  const wallMat = new THREE.MeshStandardMaterial({ map: woodTex, bumpMap: woodTex, bumpScale: 2, roughness: 0.6, color: 0xd8b48a });
   const ceilMat = M(0xe9dcc0, { roughness: 0.9 });
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(82, 66), new THREE.MeshStandardMaterial({ map: marbleTex, roughness: 0.15, metalness: 0.05, envMapIntensity: 0.6 }));
   floor.rotation.x = -Math.PI / 2; floor.position.set(IN.x, 0.01, IN.z); floor.receiveShadow = true; scene.add(floor);
@@ -903,10 +935,10 @@ addEventListener('mousemove', e => {
 });
 // ============================================================ GRAPHICS QUALITY (runs on any PC)
 const PRESETS = {
-  low:    { pr: 0.7,  shadows: false, shadowMap: 512,  bloom: false, lights: false },
-  medium: { pr: 1.0,  shadows: true,  shadowMap: 1024, bloom: true,  lights: true },
-  high:   { pr: 1.5,  shadows: true,  shadowMap: 2048, bloom: true,  lights: true },
-  ultra:  { pr: 2.0,  shadows: true,  shadowMap: 4096, bloom: true,  lights: true },
+  low:    { pr: 0.7,  shadows: false, shadowMap: 512,  bloom: false, lights: false, ao: false, msaa: 0 },
+  medium: { pr: 1.0,  shadows: true,  shadowMap: 1024, bloom: true,  lights: true,  ao: false, msaa: 2 },
+  high:   { pr: 1.25, shadows: true,  shadowMap: 2048, bloom: true,  lights: true,  ao: true,  msaa: 4 },
+  ultra:  { pr: 1.75, shadows: true,  shadowMap: 4096, bloom: true,  lights: true,  ao: true,  msaa: 4 },
 };
 let quality = 'high', Q = PRESETS.high;
 function detectQuality() {
@@ -924,7 +956,7 @@ function applyQuality(q) {
   renderer.setPixelRatio(Math.min(devicePixelRatio, Q.pr)); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
   renderer.shadowMap.enabled = Q.shadows;
   sunLight.shadow.mapSize.set(Q.shadowMap, Q.shadowMap); if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; }
-  bloom.enabled = Q.bloom;
+  bloom.enabled = Q.bloom; ssao.enabled = Q.ao; composer.renderTarget1.samples = composer.renderTarget2.samples = Q.msaa;
   scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => m.needsUpdate = true); });
 }
 // Auto-lower quality if the game runs slowly (like GTA's dynamic settings)
@@ -1077,6 +1109,7 @@ function loop() {
 
   if (phase === 'menu') { camera.position.set(80 + Math.sin(t * 0.05) * 60, 30, 40); camera.lookAt(TAJ.x, 25, TAJ.z); }
   watchFps(dt);
+  grade.uniforms.time.value = t % 100;
   composer.render();
 }
 loop();
