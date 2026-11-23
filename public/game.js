@@ -568,6 +568,32 @@ for (let k = 0; k < 4; k++) { const car = new THREE.Mesh(new THREE.BoxGeometry(1
 train.position.set(-240, 12.6, METRO_Z - 1.8); scene.add(train);
 // Mumbai auto-rickshaws (black & yellow) and red BEST buses
 
+// ---- Colaba landmarks (approximate, from local knowledge; replaced by OpenStreetMap data when available)
+const ROAD_NAMES_Z = ['P. J. Ramchandani Marg (Apollo Bunder)', 'Mereweather Road', 'Shahid Bhagat Singh Rd', 'Best Marg', 'Nathalal Parekh Marg', 'Wodehouse Road'];
+const ROAD_NAMES_X = ['Arthur Bunder Rd', 'Ormiston Road', 'Colaba Causeway', 'Battery Street', 'Henry Road', 'Allana Road', 'Garden Road', 'Strand Road', 'Navy Nagar Rd', 'Cuffe Parade'];
+function roadSign(text, x, z, ry) {
+  const t = canvasTex(512, 128, (c, w, h) => { c.fillStyle = '#0b5d2a'; c.fillRect(0, 0, w, h); c.strokeStyle = '#fff'; c.lineWidth = 6; c.strokeRect(8, 8, w - 16, h - 16); c.fillStyle = '#fff'; c.font = `600 ${text.length > 24 ? 30 : 40}px Oswald, Arial`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(text, w / 2, h / 2); });
+  const g = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 3.2, 6), M(0x444444)); pole.position.y = 1.6; g.add(pole);
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.65), new THREE.MeshStandardMaterial({ map: t, side: THREE.DoubleSide, roughness: 0.5 })); board.position.y = 3.3; g.add(board);
+  g.position.set(x, 0, z); g.rotation.y = ry; scene.add(g);
+}
+ROADS_Z.forEach((z, i) => { for (const x of [-150, 50]) roadSign(ROAD_NAMES_Z[i], x, z - 6.8, 0); });
+ROADS_X.forEach((x, i) => { for (const z of [10, 160]) roadSign(ROAD_NAMES_X[i], x + 6.8, z, Math.PI / 2); });
+// Colaba Causeway market: hawker stalls with tarpaulin canopies along both pavements
+const tarp = [0x1f5fa8, 0xd0402a, 0x2a8a4a, 0xe0a020, 0x6a3a9a].map(c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.9, side: THREE.DoubleSide }));
+const goods = [0xd8506a, 0xf0c040, 0x40a0d0, 0xf4f0e0, 0x80c050, 0xc06030];
+const CAUSEWAY_X = ROADS_X[2];
+for (const side of [1, -1]) for (let z = -35; z < 255; z += 4.2) {
+  if (ROADS_Z.some(rz => Math.abs(rz - z) < 9) || Math.random() < 0.2) continue;
+  const x = CAUSEWAY_X + side * 8.2, g = new THREE.Group();
+  const table = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.9, 3.2), M(0x6a4a2a)); table.position.y = 0.45; g.add(table);
+  for (let k = 0; k < 6; k++) { const it = new THREE.Mesh(new THREE.BoxGeometry(rand(0.2, 0.45), rand(0.1, 0.35), rand(0.2, 0.5)), M(goods[(k + Math.floor(z)) % goods.length])); it.position.set(rand(-0.6, 0.6), 1.0, rand(-1.3, 1.3)); g.add(it); }
+  const canopy = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 3.8), tarp[Math.abs(Math.floor(z)) % tarp.length]); canopy.rotation.x = -Math.PI / 2; canopy.rotation.y = side * 0.25; canopy.position.y = 2.5; g.add(canopy);
+  for (const [px, pz] of [[-1, -1.8], [-1, 1.8], [1, -1.8], [1, 1.8]]) { const p = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.5, 5), M(0x8a8a8a)); p.position.set(px, 1.25, pz); g.add(p); }
+  g.position.set(x, 0.25, z); scene.add(g);
+}
+
 const roadMat = new THREE.MeshStandardMaterial({ map: pavTex, roughness: 0.85 });
 for (let bx = -200; bx <= 200; bx += 50) {
   for (let bz = -40; bz <= 260; bz += 50) {
