@@ -621,6 +621,70 @@ for (let bx = -200; bx <= 200; bx += 50) {
     }
   }
 }
+// ============================================================ REAL SOUTH-MUMBAI LANDMARKS (positions from real lat/long, relative to the Taj)
+// game frame: Taj at (TAJ.x, TAJ.z); the harbour (real south-east) is game -Z, real north-east is game +X
+function geoToGame(lat, lon) {
+  const e = (lon - 72.8330) * 105300, n = (lat - 18.9217) * 110600;
+  return new THREE.Vector3(TAJ.x + (e + n) * 0.7071, 0, TAJ.z - (e - n) * 0.7071);
+}
+const LANDMARKS = [
+  { name: 'Leopold Cafe', lat: 18.9227, lon: 72.8317, r: 0, kind: 'leopold' },
+  { name: 'Regal Circle', lat: 18.9266, lon: 72.8320, r: 40, kind: 'regal' },
+  { name: 'CSMVS Museum', lat: 18.9269, lon: 72.8326, r: 45, kind: 'museum' },
+  { name: 'Nariman House', lat: 18.9165, lon: 72.8283, r: 22, kind: 'nariman' },
+  { name: 'Oberoi-Trident', lat: 18.9270, lon: 72.8205, r: 40, kind: 'oberoi' },
+  { name: 'Churchgate', lat: 18.9353, lon: 72.8275, r: 45, kind: 'churchgate' },
+  { name: 'CST Station', lat: 18.9398, lon: 72.8355, r: 80, kind: 'cst' },
+].map(l => ({ ...l, pos: geoToGame(l.lat, l.lon) }));
+const nearLandmark = (x, z) => LANDMARKS.some(l => l.r && Math.hypot(x - l.pos.x, z - l.pos.z) < l.r + 26);
+(function buildLandmarks() {
+  const stone = new THREE.MeshStandardMaterial({ map: stoneTex, color: 0xe8d8b8, roughness: 0.85 });
+  const basalt = new THREE.MeshStandardMaterial({ map: brickBand, color: 0xa09080, roughness: 0.85 });
+  const white = M(0xf4efe4, { roughness: 0.6 }), green = M(0x3f7a2e, { roughness: 1 }), red = M(0xa8352c, { roughness: 0.6 });
+  const label = (text, p, h) => { const s = textSprite(text, '#ffd21f'); s.material.depthTest = true; s.material.fog = true; s.scale.set(8, 2, 1); s.position.set(p.x, h, p.z); scene.add(s); };
+  const ring = (p, r) => { const g = new THREE.Mesh(new THREE.CircleGeometry(r, 48), new THREE.MeshStandardMaterial({ map: pavTex, roughness: 0.9 })); g.rotation.x = -Math.PI / 2; g.position.set(p.x, 0.05, p.z); scene.add(g); };
+  for (const l of LANDMARKS) {
+    const p = l.pos;
+    if (l.kind === 'leopold') { // corner cafe on Colaba Causeway, attacked on 26/11
+      const t = canvasTex(512, 96, (c, w, h) => { c.fillStyle = '#1a3a6a'; c.fillRect(0, 0, w, h); c.fillStyle = '#ffd860'; c.font = '700 54px Oswald, serif'; c.textAlign = 'center'; c.fillText('LEOPOLD CAFE', w / 2, 68); });
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(9, 1.7), new THREE.MeshStandardMaterial({ map: t, emissiveMap: t, emissive: 0xffffff, emissiveIntensity: 0.4 })); sign.position.set(p.x, 4.6, p.z + 1.2); scene.add(sign);
+      label('Leopold Cafe', p, 9);
+    }
+    if (l.kind === 'regal') { // roundabout + Wellington Fountain + Regal Cinema
+      ring(p, 30);
+      const lawn = new THREE.Mesh(new THREE.CircleGeometry(12, 40), green); lawn.rotation.x = -Math.PI / 2; lawn.position.set(p.x, 0.08, p.z); scene.add(lawn);
+      addBox(4, 5, 4, stone, p.x, 0, p.z); const cup = new THREE.Mesh(new THREE.SphereGeometry(2.4, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), stone); cup.position.set(p.x, 5, p.z); scene.add(cup);
+      for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2, c = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 5, 10), white); c.position.set(p.x + Math.cos(a) * 2.6, 2.5, p.z + Math.sin(a) * 2.6); scene.add(c); }
+      const cine = facade({ floors: 4, cols: 8, wall: '#e8dcc0', lit: 0.5, trim: '#c84a2a' }); addBox(36, 18, 22, cine, p.x - 45, 0, p.z + 10);
+      const rt = canvasTex(512, 96, (c, w, h) => { c.fillStyle = '#111'; c.fillRect(0, 0, w, h); c.fillStyle = '#ff3a3a'; c.font = '700 64px Oswald'; c.textAlign = 'center'; c.fillText('REGAL', w / 2, 72); });
+      const rs = new THREE.Mesh(new THREE.PlaneGeometry(12, 2.2), new THREE.MeshStandardMaterial({ map: rt, emissiveMap: rt, emissive: 0xffffff, emissiveIntensity: 1 })); rs.position.set(p.x - 45, 14, p.z - 1.05); rs.rotation.y = Math.PI; scene.add(rs);
+      label('Regal Circle', p, 12);
+    }
+    if (l.kind === 'museum') { // Indo-Saracenic museum with its white dome in a garden
+      const lawn = new THREE.Mesh(new THREE.PlaneGeometry(80, 70), green); lawn.rotation.x = -Math.PI / 2; lawn.position.set(p.x, 0.06, p.z); scene.add(lawn);
+      addBox(46, 14, 22, new THREE.MeshStandardMaterial({ map: brickBand, color: 0xc8b090 }), p.x, 0, p.z);
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 5, 32), white); drum.position.set(p.x, 16.5, p.z); scene.add(drum);
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(6.5, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), white); dome.scale.y = 1.2; dome.position.set(p.x, 19, p.z); scene.add(dome);
+      for (const dx of [-20, 20]) { const d = new THREE.Mesh(new THREE.SphereGeometry(2.4, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), white); d.position.set(p.x + dx, 14, p.z); scene.add(d); }
+      label('CSMVS Museum', p, 30);
+    }
+    if (l.kind === 'nariman') { const f = facade({ floors: 5, cols: 5, wall: '#c8b8a0', lit: 0.3 }); addBox(16, 17, 16, f, p.x, 0, p.z); label('Nariman House', p, 21); }
+    if (l.kind === 'oberoi') {
+      const glass = new THREE.MeshPhysicalMaterial({ color: 0x5a7a90, metalness: 0.6, roughness: 0.1, envMapIntensity: 1.5 });
+      addBox(28, 95, 22, glass, p.x, 0, p.z); addBox(40, 10, 30, facade({ floors: 2, cols: 10, wall: '#d8d0c0', lit: 0.6 }), p.x, 0, p.z + 24);
+      label('Oberoi-Trident', p, 100);
+    }
+    if (l.kind === 'churchgate') { addBox(60, 12, 18, facade({ floors: 3, cols: 12, wall: '#e0d4b8', lit: 0.5, arched: true }), p.x, 0, p.z); const clock = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 8, 12), stone); clock.position.set(p.x, 16, p.z); scene.add(clock); label('Churchgate Station', p, 24); }
+    if (l.kind === 'cst') { // Victorian Gothic terminus: long stone wings, central tower and dome
+      addBox(120, 18, 26, basalt, p.x, 0, p.z); addBox(26, 26, 30, basalt, p.x, 0, p.z);
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 6, 24), stone); drum.position.set(p.x, 29, p.z); scene.add(drum);
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(7.5, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M(0x8a7a5a, { roughness: 0.5, metalness: 0.2 })); dome.scale.y = 1.4; dome.position.set(p.x, 32, p.z); scene.add(dome);
+      for (const dx of [-55, -30, 30, 55]) { const sp = new THREE.Mesh(new THREE.ConeGeometry(2.2, 9, 8), red); sp.position.set(p.x + dx, 22.5, p.z); scene.add(sp); }
+      label('CST Station', p, 48);
+    }
+  }
+})();
+
 // ============================================================ STREAMING CITY (GTA-style: the city builds ahead of you, unloads behind)
 const CHUNK = 100, STREAM_R = 2;
 function shopFacadeMat(wall, k) {
@@ -660,7 +724,7 @@ function buildChunk(ci, cj) {
   let any = false;
   for (let bi = 0; bi < 2; bi++) for (let bj = 0; bj < 2; bj++) {
     const bx = -200 + 50 * (2 * ci + bi), bz = -40 + 50 * (2 * cj + bj);
-    if (inCore(bx, bz) || bz < -40) continue; any = true;
+    if (inCore(bx, bz) || bz < -40 || nearLandmark(bx, bz)) continue; any = true;
     const slab = new THREE.Mesh(slabGeo, roadMat); slab.position.set(bx, 0.125, bz); slab.receiveShadow = true; group.add(slab);
     for (let k = -18; k <= 18; k += 2) { addInst(kerbI, bx + k, 0.17, bz + 19); addInst(kerbI, bx + k, 0.17, bz - 19); addInst(kerbI, bx + 19, 0.17, bz + k, Math.PI / 2); addInst(kerbI, bx - 19, 0.17, bz + k, Math.PI / 2); }
     const parts = R() < 0.35 ? 1 : R() < 0.7 ? 2 : 3;
@@ -1607,6 +1671,7 @@ async function begin(online) {
   startStory(); renderer.domElement.requestPointerLock();
   if (location.hash === '#tajday') { me.pos.set(SPOTS.red.x + 30, 0, SPOTS.red.z + 32); me.yaw = 0.35; me.pitch = 0.3; }
   if (location.hash === '#far') { me.pos.set(-25 + 7, 0, 835); me.yaw = 0; me.pitch = -0.02; marker.visible = false; }
+  if (location.hash === '#regal') { const r = LANDMARKS[1].pos; me.pos.set(r.x - 10, 0, r.z - 60); me.yaw = Math.PI + 0.3; me.pitch = 0.12; marker.visible = false; }
   if (location.hash === '#colonel') { me.pos.set(SPOTS.handler.x + 3, 0, SPOTS.handler.z + 7); me.yaw = 0.3; me.pitch = -0.12; }
   if (location.hash === '#taj' || location.hash === '#assault') { // dev shortcuts
     setNight(); fireGroup.visible = true; tajFireLight.intensity = 400; redZoneProps.visible = true; marker.visible = false;
@@ -1629,6 +1694,7 @@ function drawMinimap() {
   const dot = (x, z, col, r = 4) => { const [a, b] = P(x, z); mm.fillStyle = col; mm.beginPath(); mm.arc(a, b, r, 0, 7); mm.fill(); };
   if (marker.visible) dot(marker.position.x, marker.position.z, '#ffd21f', 6);
   if (redMarker.visible) dot(redMarker.position.x, redMarker.position.z, '#ff2020', 8);
+  if (!inside) for (const l of LANDMARKS) { const [a, b] = P(l.pos.x, l.pos.z); if (Math.abs(a) < 85 && Math.abs(b) < 85) { dot(l.pos.x, l.pos.z, '#c07cff', 4); mm.save(); mm.translate(a, b); mm.rotate(-me.yaw); mm.fillStyle = '#e0c0ff'; mm.font = '10px Inter'; mm.fillText(l.name, 6, 3); mm.restore(); } }
   if (exfilMarker) dot(exfilMarker.position.x, exfilMarker.position.z, '#3f6', 6);
   for (const pg of pings) dot(pg.p.x, pg.p.z, '#ffd21f', 5);
   for (const p of net.peers.values()) if (p.model.visible) dot(p.pos.x, p.pos.z, p.down ? '#f80' : '#4af');
