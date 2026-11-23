@@ -621,6 +621,87 @@ for (let bx = -200; bx <= 200; bx += 50) {
     }
   }
 }
+// ============================================================ STREAMING CITY (GTA-style: the city builds ahead of you, unloads behind)
+const CHUNK = 100, STREAM_R = 2;
+function shopFacadeMat(wall, k) {
+  const W = 512, H = 512, floors = 7, cols = 6, cw = W / cols, fh = H / floors;
+  const lit = [];
+  const map = canvasTex(W, H, (c) => {
+    grain(c, W, H, wall, 0.06, 5000);
+    for (let f = 0; f < floors - 1; f++) { c.fillStyle = '#f4efe2'; c.fillRect(0, f * fh + fh - 4, W, 4); for (let i = 0; i < cols; i++) { const x = i * cw + cw * 0.22, y = f * fh + fh * 0.2; c.fillStyle = '#f4efe2'; c.fillRect(x - 3, y - 3, cw * 0.56 + 6, fh * 0.6 + 6); c.fillStyle = '#26303a'; c.fillRect(x, y, cw * 0.56, fh * 0.6); c.fillStyle = 'rgba(120,120,120,.6)'; c.fillRect(x - 4, y + fh * 0.6, cw * 0.56 + 8, 5); if (Math.random() < 0.45) lit.push([x, y]); } }
+    // ground-floor shops with painted signboards
+    const gy = (floors - 1) * fh;
+    for (let i = 0; i < 3; i++) {
+      const x = i * W / 3, [bg, fg] = SIGN_COLORS[(k * 3 + i) % SIGN_COLORS.length], name = SHOP_NAMES[(k * 5 + i * 7) % SHOP_NAMES.length];
+      c.fillStyle = bg; c.fillRect(x + 4, gy + 4, W / 3 - 8, fh * 0.3); c.fillStyle = fg; c.font = '700 15px Oswald, Arial'; c.textAlign = 'center'; c.fillText(name.toUpperCase(), x + W / 6, gy + fh * 0.21);
+      c.fillStyle = i % 2 ? '#ffe7b0' : '#7a7f84'; c.fillRect(x + 8, gy + fh * 0.36, W / 3 - 16, fh * 0.64);
+      if (i % 2) for (let n = 0; n < 12; n++) { c.fillStyle = ['#c84', '#48c', '#c44', '#4a4'][n % 4]; c.fillRect(x + 12 + rand(0, W / 3 - 30), gy + fh * 0.45 + rand(0, fh * 0.4), 8, 10); }
+      else for (let y = gy + fh * 0.36; y < H; y += 4) { c.fillStyle = '#5a5f64'; c.fillRect(x + 8, y, W / 3 - 16, 1); }
+    }
+  });
+  const em = canvasTex(W, H, (c) => { c.fillStyle = '#000'; c.fillRect(0, 0, W, H); c.fillStyle = '#ffd59a'; for (const [x, y] of lit) c.fillRect(x, y, cw * 0.56, fh * 0.6); const gy = (floors - 1) * fh; for (let i = 0; i < 3; i++) { c.fillStyle = '#888'; c.fillRect(i * W / 3 + 4, gy + 4, W / 3 - 8, fh * 0.3); if (i % 2) { c.fillStyle = '#ffe7b0'; c.fillRect(i * W / 3 + 8, gy + fh * 0.36, W / 3 - 16, fh * 0.64); } } });
+  const m = new THREE.MeshStandardMaterial({ map, emissiveMap: em, emissive: 0xffffff, emissiveIntensity: 0.05, roughness: 0.85 }); m.userData.nightGlow = 0.6; windowMats.push(m); return m;
+}
+const streamMats = [...pastel, '#c9b79c', '#a99a86', '#d8c8a6', '#b88f6e'].map((w, i) => shopFacadeMat(w, i));
+if (night) streamMats.forEach(m => m.emissiveIntensity = 0.6);
+const slabGeo = new THREE.BoxGeometry(38, 0.25, 38);
+const kerbPiece = new THREE.BoxGeometry(2, 0.35, 0.35);
+const kerbPieceMat = new THREE.MeshStandardMaterial({ map: canvasTex(64, 16, (c) => { c.fillStyle = '#f2c200'; c.fillRect(0, 0, 32, 16); c.fillStyle = '#141414'; c.fillRect(32, 0, 32, 16); }), roughness: 0.7 });
+const roofTankGeo = new THREE.CylinderGeometry(1.2, 1.2, 2, 10), roofTankMat = M(0x222222);
+const chunks = new Map();
+function seeded(seed) { return () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const inCore = (bx, bz) => bx >= -200 && bx <= 200 && bz >= -40 && bz <= 260;
+function buildChunk(ci, cj) {
+  const R = seeded((ci * 73856093) ^ (cj * 19349663) ^ 0x5eed), rr = (a, b) => a + R() * (b - a);
+  const group = new THREE.Group(), cols = [], sols = [];
+  const mk = (geo, mat, cap) => { const im = new THREE.InstancedMesh(geo, mat, cap); im.count = 0; im.castShadow = true; im.receiveShadow = true; group.add(im); return im; };
+  const kerbI = mk(kerbPiece, kerbPieceMat, 340), balI = mk(balconyGeo, balconyMat, 500), trunkI = mk(trunks.geometry, trunks.material, 40), leafI = mk(leaves.geometry, leaves.material, 160), poleI = mk(poles.geometry, poles.material, 40), bulbI = mk(bulbs.geometry, bulbs.material, 40), dashI = mk(dashes.geometry, dashes.material, 120);
+  dashI.castShadow = false;
+  let any = false;
+  for (let bi = 0; bi < 2; bi++) for (let bj = 0; bj < 2; bj++) {
+    const bx = -200 + 50 * (2 * ci + bi), bz = -40 + 50 * (2 * cj + bj);
+    if (inCore(bx, bz) || bz < -40) continue; any = true;
+    const slab = new THREE.Mesh(slabGeo, roadMat); slab.position.set(bx, 0.125, bz); slab.receiveShadow = true; group.add(slab);
+    for (let k = -18; k <= 18; k += 2) { addInst(kerbI, bx + k, 0.17, bz + 19); addInst(kerbI, bx + k, 0.17, bz - 19); addInst(kerbI, bx + 19, 0.17, bz + k, Math.PI / 2); addInst(kerbI, bx - 19, 0.17, bz + k, Math.PI / 2); }
+    const parts = R() < 0.35 ? 1 : R() < 0.7 ? 2 : 3;
+    for (let p = 0; p < parts; p++) {
+      const w = 32 / parts - 1, ox = -16 + (p + 0.5) * (32 / parts), h = rr(10, 42), d = rr(26, 32);
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), streamMats[Math.floor(R() * streamMats.length)]);
+      mesh.position.set(bx + ox, h / 2, bz); mesh.castShadow = mesh.receiveShadow = true; group.add(mesh);
+      const c = { minX: bx + ox - w / 2, maxX: bx + ox + w / 2, minZ: bz - d / 2, maxZ: bz + d / 2, minY: 0, maxY: h }; cols.push(c); sols.push(mesh);
+      const floors = Math.floor((h - 5) / 3.4);
+      for (const dir of [1, -1]) for (let f = 0; f < floors; f++) for (let i = 0; i < Math.floor(w / 5); i++) if (R() < 0.5) addInst(balI, bx + ox - w / 2 + 2.5 + i * 5, 6 + f * 3.4, bz + dir * (d / 2 + 0.5));
+      if (R() < 0.7) { const t = new THREE.Mesh(roofTankGeo, roofTankMat); t.position.set(bx + ox + rr(-3, 3), h + 1, bz + rr(-5, 5)); group.add(t); }
+    }
+    // street furniture on the road south of the block
+    for (let x = bx - 18; x <= bx + 18; x += 12) { addInst(poleI, x, 4, bz + 25 - 6.6); addInst(bulbI, x, 8.1, bz + 25 - 6.6); if (R() < 0.5) { const tx = x + 6, tz = bz + 25 - 7; addInst(trunkI, tx, 2, tz); for (let i = 0; i < 4; i++) addInst(leafI, tx + rr(-1.2, 1.2), rr(4, 5.6), tz + rr(-1.2, 1.2), rr(0, 6), rr(0.8, 1.3), rr(0.7, 1), rr(0.8, 1.3)); } }
+    for (let x = bx - 21; x <= bx + 21; x += 7) { _q.setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0)); _m4.compose(_p.set(x, 0.03, bz + 25), _q, _s.set(1, 1, 1)); if (dashI.count < 120) dashI.setMatrixAt(dashI.count++, _m4); }
+    for (let z = bz - 21; z <= bz + 21; z += 7) { _q.setFromEuler(new THREE.Euler(-Math.PI / 2, 0, Math.PI / 2)); _m4.compose(_p.set(bx - 25, 0.03, z), _q, _s.set(1, 1, 1)); if (dashI.count < 120) dashI.setMatrixAt(dashI.count++, _m4); }
+  }
+  for (const im of [kerbI, balI, trunkI, leafI, poleI, bulbI, dashI]) im.instanceMatrix.needsUpdate = true;
+  if (any) { scene.add(group); colliders.push(...cols); solids.push(...sols); }
+  return { group, cols: new Set(cols), sols: new Set(sols) };
+}
+function unloadChunk(ch) {
+  scene.remove(ch.group);
+  ch.group.traverse(o => { if (o.isMesh && !o.isInstancedMesh && o.geometry !== slabGeo && o.geometry !== roofTankGeo) o.geometry.dispose(); if (o.isInstancedMesh) o.dispose(); });
+  for (let i = colliders.length - 1; i >= 0; i--) if (ch.cols.has(colliders[i])) colliders.splice(i, 1);
+  for (let i = solids.length - 1; i >= 0; i--) if (ch.sols.has(solids[i])) solids.splice(i, 1);
+}
+function updateStreaming() {
+  if (inside || phase === 'menu') return;
+  const ci0 = Math.floor((me.pos.x + 225) / CHUNK), cj0 = Math.floor((me.pos.z + 65) / CHUNK);
+  let best = null, bd = 1e9;
+  for (let di = -STREAM_R; di <= STREAM_R; di++) for (let dj = -STREAM_R; dj <= STREAM_R; dj++) {
+    const key = (ci0 + di) + ',' + (cj0 + dj); if (chunks.has(key)) continue;
+    const d = di * di + dj * dj; if (d < bd) { bd = d; best = [ci0 + di, cj0 + dj, key]; }
+  }
+  if (best) chunks.set(best[2], buildChunk(best[0], best[1])); // one chunk per frame = no stutter
+  for (const [key, ch] of chunks) { const [ci, cj] = key.split(',').map(Number); if (Math.abs(ci - ci0) > STREAM_R + 1 || Math.abs(cj - cj0) > STREAM_R + 1) { unloadChunk(ch); chunks.delete(key); } }
+  // ground follows the player (snapped to the texture tile so it never swims)
+  ground.position.x = Math.round(me.pos.x / 10) * 10; ground.position.z = Math.round(me.pos.z / 10) * 10;
+}
+
 // Kaali-peeli taxis & cars
 const movingCars = [];
 for (let i = 0; i < 40; i++) {
@@ -1525,6 +1606,7 @@ async function begin(online) {
   meModel = makeHuman({ shirt: 0x2b3523, vest: 0x1c241a, head: 0x111111, gun: false, uniform: true }); setOutfit(meModel, me.outfit); scene.add(meModel);
   startStory(); renderer.domElement.requestPointerLock();
   if (location.hash === '#tajday') { me.pos.set(SPOTS.red.x + 30, 0, SPOTS.red.z + 32); me.yaw = 0.35; me.pitch = 0.3; }
+  if (location.hash === '#far') { me.pos.set(-25 + 7, 0, 835); me.yaw = 0; me.pitch = -0.02; marker.visible = false; }
   if (location.hash === '#colonel') { me.pos.set(SPOTS.handler.x + 3, 0, SPOTS.handler.z + 7); me.yaw = 0.3; me.pitch = -0.12; }
   if (location.hash === '#taj' || location.hash === '#assault') { // dev shortcuts
     setNight(); fireGroup.visible = true; tajFireLight.intensity = 400; redZoneProps.visible = true; marker.visible = false;
@@ -1623,7 +1705,8 @@ function loop() {
   collide(me.pos, 0.4);
   const gy = groundAt(me.pos.x, me.pos.z, me.pos.y);
   if (me.pos.y <= gy || (me.onGround && me.vel.y <= 0 && me.pos.y - gy < STEP)) { if (me.vel.y < -14 && phase === 'assault') hurt((-me.vel.y - 14) * 6); me.pos.y = gy; me.vel.y = 0; me.onGround = true; } else me.onGround = false;
-  if (!inside) { me.pos.x = clamp(me.pos.x, -230, 240); me.pos.z = clamp(me.pos.z, -158, 280); }
+  if (!inside) { me.pos.x = clamp(me.pos.x, -3000, 3000); me.pos.z = clamp(me.pos.z, -158, 3000); }
+  updateStreaming();
 
   // --- camera
   const moving = Math.hypot(me.vel.x, me.vel.z);
@@ -1669,9 +1752,22 @@ function loop() {
   for (let i = smokes.length - 1; i >= 0; i--) { const s = smokes[i]; s.t -= dt; const k = s.t > 14 ? (16 - s.t) / 2 : s.t < 3 ? s.t / 3 : 1; s.g.children.forEach((sp, j) => { sp.material.opacity = sp.userData.o * k; sp.position.y += Math.sin(t + j) * 0.002; sp.material.rotation += dt * 0.05; }); if (s.t <= 0) { scene.remove(s.g); smokes.splice(i, 1); } }
 
   // --- world animation
-  for (const c of movingCars) { c.g.position.x += c.dir * c.speed * dt; if (c.g.position.x > 230) c.g.position.x = -230; if (c.g.position.x < -230) c.g.position.x = 230; }
+  for (const c of movingCars) { // traffic recycles around the player wherever they go
+    c.g.position.x += c.dir * c.speed * dt;
+    const dx = c.g.position.x - me.pos.x;
+    if (Math.abs(dx) > 260 || Math.abs(c.g.position.z - me.pos.z) > 300) {
+      const road = -15 + 50 * (Math.round((me.pos.z + 15) / 50) + Math.floor(rand(-2, 3)));
+      c.g.position.z = road === METRO_Z ? road + c.dir * 3.6 : road + c.dir * 2.6; if (road < -15) c.g.position.z = -15 + c.dir * 2.6;
+      c.g.position.x = me.pos.x - c.dir * rand(150, 250);
+    }
+  }
   if (!inside) for (let i = 0; i < peds.length; i++) {
     const p = peds[i], u = p.userData;
+    if (p.position.distanceToSquared(me.pos) > 170 * 170) { // respawn near the player on a nearby pavement
+      const road = Math.max(-15, -15 + 50 * (Math.round((me.pos.z + 15) / 50) + Math.floor(rand(-2, 3))));
+      if (u.alongX) p.position.set(me.pos.x + rand(-140, 140), 0.25, road + (Math.random() < 0.5 ? 7 : -7));
+      else { const rx = -225 + 50 * (Math.round((me.pos.x + 225) / 50) + Math.floor(rand(-2, 3))); p.position.set(rx + (Math.random() < 0.5 ? 7 : -7), 0.25, me.pos.z + rand(-140, 140)); }
+    }
     const far = p.position.distanceToSquared(me.pos) > 160 * 160;
     p.visible = i < pedLimit && !far; if (!p.visible) continue;
     // panic: run away from the Taj; calm: stroll, and stop/look when the player bumps into them
@@ -1682,8 +1778,8 @@ function loop() {
     else {
       if (u.panic && u.alongX) u.dir = p.position.x > TAJ.x ? 1 : -1;
       if (u.panic && !u.alongX) u.dir = 1;
-      if (u.alongX) { p.position.x += u.dir * sp * dt; p.rotation.y = u.dir > 0 ? Math.PI / 2 : -Math.PI / 2; if (Math.abs(p.position.x) > 200) { u.dir *= -1; if (u.panic) p.position.x = clamp(p.position.x, -200, 200); } }
-      else { p.position.z += u.dir * sp * dt; p.rotation.y = u.dir > 0 ? 0 : Math.PI; if (p.position.z > 255 || p.position.z < -35) u.dir *= -1; }
+      if (u.alongX) { p.position.x += u.dir * sp * dt; p.rotation.y = u.dir > 0 ? Math.PI / 2 : -Math.PI / 2;  }
+      else { p.position.z += u.dir * sp * dt; p.rotation.y = u.dir > 0 ? 0 : Math.PI; if (p.position.z < -35) u.dir = 1; }
     }
     const sw = Math.sin(t * sp * 3.2 + u.phase) * (sp > 0 ? 0.55 : 0);
     u.legL.rotation.x = sw; u.legR.rotation.x = -sw;
