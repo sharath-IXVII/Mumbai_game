@@ -341,11 +341,11 @@ const roadByName = n => roads.find(r => r.name.startsWith(n));
 // ---- land, sea and road surfaces
 const landShape = new THREE.Shape(coastPts.map(([x, z]) => new THREE.Vector2(x, -z)));
 const landTex = pavTex.clone(); landTex.needsUpdate = true; landTex.repeat.set(0.25, 0.25);
-const land = new THREE.Mesh(new THREE.ShapeGeometry(landShape), new THREE.MeshStandardMaterial({ map: landTex, roughness: 0.9, side: THREE.DoubleSide }));
+const land = new THREE.Mesh(new THREE.ShapeGeometry(landShape), new THREE.MeshStandardMaterial({ map: landTex, color: 0xa09484, roughness: 1, envMapIntensity: 0.15, side: THREE.DoubleSide }));
 land.rotation.x = -Math.PI / 2; land.receiveShadow = true; scene.add(land);
 const seaWallGeo = []; // stone embankment along the coast
 for (let i = 0; i < coastPts.length; i++) { const [x1, z1] = coastPts[i], [x2, z2] = coastPts[(i + 1) % coastPts.length]; const L = Math.hypot(x2 - x1, z2 - z1); const m = new THREE.Mesh(new THREE.BoxGeometry(L, 1.2, 1.2), M(0x8f887a, { roughness: 0.95 })); m.position.set((x1 + x2) / 2, -0.3, (z1 + z2) / 2); m.rotation.y = -Math.atan2(z2 - z1, x2 - x1); scene.add(m); }
-const roadSurfaceMat = new THREE.MeshStandardMaterial({ map: (() => { const t = asphaltTex.clone(); t.needsUpdate = true; t.repeat.set(1, 1); return t; })(), roughness: 0.92 });
+const roadSurfaceMat = new THREE.MeshStandardMaterial({ map: (() => { const t = asphaltTex.clone(); t.needsUpdate = true; t.repeat.set(1, 1); return t; })(), roughness: 0.92, envMapIntensity: 0.25 });
 const kerbStripeMat = new THREE.MeshStandardMaterial({ map: (() => { const t = canvasTex(64, 16, (c) => { c.fillStyle = '#f2c200'; c.fillRect(0, 0, 32, 16); c.fillStyle = '#141414'; c.fillRect(32, 0, 32, 16); }); return t; })(), roughness: 0.7 });
 function ribbon(r, off, width, y, uLen, mat) { // strip along a road polyline, offset sideways
   const pos = [], uv = [], idx = [];
