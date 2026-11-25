@@ -719,6 +719,7 @@ const kerbPiece = new THREE.BoxGeometry(2, 0.35, 0.35);
 const kerbPieceMat = new THREE.MeshStandardMaterial({ map: canvasTex(64, 16, (c) => { c.fillStyle = '#f2c200'; c.fillRect(0, 0, 32, 16); c.fillStyle = '#141414'; c.fillRect(32, 0, 32, 16); }), roughness: 0.7 });
 const roofTankGeo = new THREE.CylinderGeometry(1.2, 1.2, 2, 10), roofTankMat = M(0x222222);
 // ============================================================ BUILT FROM THE MAP: street furniture, buildings, landmarks frontage
+function seeded(seed) { return () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const _R = seeded(2611);
 const rr = (a, b) => a + _R() * (b - a);
 // lamps, trees, lane dashes along every real road
@@ -826,6 +827,12 @@ movingCars.forEach(placeVehicle);
 // parked autos & cars at the kerb
 for (let i = 0; i < 30; i++) { const { r, s } = nearRoadSpot(900, 0, SPOTS.spawn); const p = roadPoint(r, s), side = i % 2 ? 1 : -1, o = side * (r.w / 2 - 1.2); const x = p.x - p.tz * o, z = p.z + p.tx * o, ry = Math.atan2(p.tx, p.tz); if (i % 3) autoRickshaw(x, z, ry); else car(x, z, ry, true); }
 { const p = sidewalk('Colaba Causeway', 905, -1); car(p.x, p.z, 0.3, false); } // the Colonel's jeep
+
+// Police barricade + vehicles at the red zone (shown after alert)
+const redZoneProps = new THREE.Group(); redZoneProps.visible = false; scene.add(redZoneProps);
+for (let i = 0; i < 6; i++) { const bar = new THREE.Mesh(new THREE.BoxGeometry(3, 1, 0.3), M(i % 2 ? 0xdddddd : 0xcc2222)); bar.position.set(TAJ.x - 15 + i * 6, 0.5, TAJ.z + 36); redZoneProps.add(bar); }
+const siren = new THREE.PointLight(0x2050ff, 0, 40); siren.position.set(TAJ.x + 12, 3, TAJ.z + 38); scene.add(siren);
+const siren2 = new THREE.PointLight(0xff2030, 0, 40); siren2.position.set(TAJ.x - 12, 3, TAJ.z + 38); scene.add(siren2);
 
 // ============================================================ CHARACTERS
 function makeHuman({ shirt = 0x3b4a3a, pants = 0x2c3325, skin = 0x8d5a3b, head = 0x1f2a1e, vest = 0x2a3324, gun = true, tag, modelTint, uniform = false, noModel = false } = {}) {
