@@ -279,6 +279,360 @@ const sea = new THREE.Mesh(new THREE.PlaneGeometry(20000, 20000, 1, 1),
 sea.rotation.x = -Math.PI / 2; sea.position.set(0, -0.25, 0); scene.add(sea);
 // ============================================================ REAL MAP OF SOUTH MUMBAI (roads & coastline traced from real coordinates)
 // game frame: the Taj sits at (-40, -100); the harbour (real south-east) is game -Z, real north-east is game +X; 1 unit = 1 metre
+function geoToGame(lat, lon) {
+  const e = (lon - 72.8330) * 105300, n = (lat - 18.9217) * 110600;
+  return new THREE.Vector3(-40 + (e + n) * 0.7071, 0, -100 - (e - n) * 0.7071);
+}
+const MAP_ROADS = [
+  // [name, width(m), [[lat,lon],...]]
+  ['P. J. Ramchandani Marg', 12, [[18.92245, 72.83430], [18.92150, 72.83320], [18.92050, 72.83200], [18.91930, 72.83060], [18.91800, 72.82930], [18.91660, 72.82820]]],
+  ['Chhatrapati Shivaji Maharaj Marg', 14, [[18.92245, 72.83430], [18.92360, 72.83400], [18.92500, 72.83330], [18.92620, 72.83235]]],
+  ['B. K. Boman Behram Marg', 9, [[18.92370, 72.83395], [18.92260, 72.83250], [18.92150, 72.83110], [18.92040, 72.82980]]],
+  ['Mahakavi Bhushan Marg', 9, [[18.92260, 72.83250], [18.92400, 72.83215], [18.92560, 72.83190]]],
+  ['Colaba Causeway', 14, [[18.92620, 72.83235], [18.92470, 72.83180], [18.92280, 72.83160], [18.92080, 72.83080], [18.91860, 72.82940], [18.91640, 72.82760], [18.91420, 72.82560], [18.91200, 72.82380], [18.90950, 72.82200]]],
+  ['Best Marg', 9, [[18.92560, 72.83190], [18.92420, 72.83080], [18.92240, 72.82980], [18.92040, 72.82880], [18.91840, 72.82780]]],
+  ['Mereweather Road', 8, [[18.92280, 72.83160], [18.92150, 72.83110]]],
+  ['Arthur Bunder Road', 9, [[18.91860, 72.82940], [18.91760, 72.83060], [18.91660, 72.83140]]],
+  ['Nathalal Parekh Marg', 10, [[18.92420, 72.82850], [18.92200, 72.82760], [18.91950, 72.82650], [18.91700, 72.82540], [18.91450, 72.82420], [18.91200, 72.82300]]],
+  ['Wodehouse Road', 10, [[18.92040, 72.82880], [18.91950, 72.82650], [18.91860, 72.82420]]],
+  ['Captain Prakash Pethe Marg', 12, [[18.92300, 72.82300], [18.92000, 72.82250], [18.91700, 72.82200], [18.91400, 72.82130], [18.91100, 72.82050]]],
+  ['Hormusji Street', 6, [[18.91640, 72.82760], [18.91700, 72.82540]]],
+  ['Madame Cama Road', 14, [[18.92620, 72.83235], [18.92640, 72.83050], [18.92650, 72.82850], [18.92640, 72.82600], [18.92600, 72.82300], [18.92560, 72.82100]]],
+  ['Maharshi Karve Road', 14, [[18.92620, 72.83235], [18.92800, 72.83080], [18.93000, 72.82930], [18.93250, 72.82800], [18.93500, 72.82720], [18.93800, 72.82680]]],
+  ['Mahatma Gandhi Road', 13, [[18.92620, 72.83235], [18.92850, 72.83230], [18.93050, 72.83210], [18.93250, 72.83180], [18.93500, 72.83260], [18.93800, 72.83400], [18.93990, 72.83520]]],
+  ['Veer Nariman Road', 12, [[18.93520, 72.82720], [18.93400, 72.82920], [18.93250, 72.83180]]],
+  ['Shahid Bhagat Singh Road', 13, [[18.92620, 72.83235], [18.92900, 72.83380], [18.93200, 72.83560], [18.93550, 72.83680], [18.93900, 72.83750]]],
+  ['Dadabhai Naoroji Road', 13, [[18.93250, 72.83180], [18.93500, 72.83380], [18.93750, 72.83470], [18.93990, 72.83520]]],
+  ['Marine Drive (Netaji Subhash Rd)', 18, [[18.92560, 72.82100], [18.92900, 72.82160], [18.93300, 72.82220], [18.93700, 72.82270], [18.94100, 72.82260], [18.94450, 72.82200], [18.94750, 72.82060]]],
+  ['Free Press Journal Marg', 10, [[18.92600, 72.82300], [18.92900, 72.82160]]],
+  ['Jamshedji Tata Road', 10, [[18.92640, 72.82600], [18.93000, 72.82520], [18.93300, 72.82450], [18.93700, 72.82400]]],
+  ['Walchand Hirachand Marg', 11, [[18.93550, 72.83680], [18.93800, 72.83900], [18.94000, 72.84050]]],
+];
+const MAP_COAST = [
+  [18.92520, 72.82000], [18.92900, 72.82080], [18.93300, 72.82150], [18.93700, 72.82200], [18.94100, 72.82190], [18.94450, 72.82130], [18.94800, 72.81980], [18.95200, 72.81800],
+  [18.95600, 72.82200], [18.95600, 72.84600], [18.94600, 72.84400], [18.93900, 72.84200], [18.93300, 72.83950], [18.92800, 72.83750], [18.92420, 72.83560],
+  [18.92300, 72.83530], [18.92160, 72.83500], [18.92140, 72.83440], [18.92200, 72.83420], // Gateway of India promontory
+  [18.92110, 72.83330], [18.92010, 72.83210], [18.91890, 72.83080], [18.91740, 72.83200], [18.91600, 72.83200], [18.91560, 72.82900], [18.91400, 72.82700], [18.91100, 72.82450], [18.90800, 72.82250], [18.90500, 72.82050],
+  [18.90450, 72.81850], [18.90750, 72.81800], [18.91100, 72.81900], [18.91500, 72.82000], [18.91900, 72.82050], [18.92200, 72.82020],
+];
+const roads = MAP_ROADS.map(([name, w, pts]) => {
+  const P = pts.map(p => geoToGame(p[0], p[1])), cum = [0];
+  for (let i = 1; i < P.length; i++) cum.push(cum[i - 1] + P[i].distanceTo(P[i - 1]));
+  return { name, w, P, cum, len: cum[cum.length - 1] };
+});
+function roadPoint(r, s) { // position + unit tangent at distance s along road r
+  s = clamp(s, 0, r.len); let i = 1; while (i < r.cum.length - 1 && r.cum[i] < s) i++;
+  const a = r.P[i - 1], b = r.P[i], seg = r.cum[i] - r.cum[i - 1] || 1, t = (s - r.cum[i - 1]) / seg;
+  const tx = (b.x - a.x) / seg, tz = (b.z - a.z) / seg;
+  return { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, tx, tz };
+}
+const coastPts = MAP_COAST.map(p => { const v = geoToGame(p[0], p[1]); return [v.x, v.z]; });
+function onLand(x, z) { let inside = false; for (let i = 0, j = coastPts.length - 1; i < coastPts.length; j = i++) { const [xi, zi] = coastPts[i], [xj, zj] = coastPts[j]; if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) inside = !inside; } return inside; }
+// spatial hash of road segments for fast "distance to nearest road edge"
+const ROAD_CELL = 60, roadGrid = new Map();
+roads.forEach((r, ri) => { for (let i = 1; i < r.P.length; i++) { const a = r.P[i - 1], b = r.P[i], pad = r.w; for (let x = Math.floor((Math.min(a.x, b.x) - pad) / ROAD_CELL); x <= Math.floor((Math.max(a.x, b.x) + pad) / ROAD_CELL); x++) for (let z = Math.floor((Math.min(a.z, b.z) - pad) / ROAD_CELL); z <= Math.floor((Math.max(a.z, b.z) + pad) / ROAD_CELL); z++) { const k = x + ',' + z; if (!roadGrid.has(k)) roadGrid.set(k, []); roadGrid.get(k).push([ri, i]); } } });
+function roadClearance(x, z) { // metres from (x,z) to the nearest road edge (negative = on a road)
+  const segs = roadGrid.get(Math.floor(x / ROAD_CELL) + ',' + Math.floor(z / ROAD_CELL)); if (!segs) return 99;
+  let best = 99;
+  for (const [ri, i] of segs) { const r = roads[ri], a = r.P[i - 1], b = r.P[i], dx = b.x - a.x, dz = b.z - a.z, L = dx * dx + dz * dz, t = clamp(((x - a.x) * dx + (z - a.z) * dz) / L, 0, 1); best = Math.min(best, Math.hypot(x - a.x - t * dx, z - a.z - t * dz) - r.w / 2); }
+  return best;
+}
+const roadByName = n => roads.find(r => r.name.startsWith(n));
+// ---- land, sea and road surfaces
+const landShape = new THREE.Shape(coastPts.map(([x, z]) => new THREE.Vector2(x, -z)));
+const landTex = pavTex.clone(); landTex.needsUpdate = true; landTex.repeat.set(0.25, 0.25);
+const land = new THREE.Mesh(new THREE.ShapeGeometry(landShape), new THREE.MeshStandardMaterial({ map: landTex, roughness: 0.9 }));
+land.rotation.x = -Math.PI / 2; land.receiveShadow = true; scene.add(land);
+const seaWallGeo = []; // stone embankment along the coast
+for (let i = 0; i < coastPts.length; i++) { const [x1, z1] = coastPts[i], [x2, z2] = coastPts[(i + 1) % coastPts.length]; const L = Math.hypot(x2 - x1, z2 - z1); const m = new THREE.Mesh(new THREE.BoxGeometry(L, 1.2, 1.2), M(0x8f887a, { roughness: 0.95 })); m.position.set((x1 + x2) / 2, -0.3, (z1 + z2) / 2); m.rotation.y = -Math.atan2(z2 - z1, x2 - x1); scene.add(m); }
+const roadSurfaceMat = new THREE.MeshStandardMaterial({ map: (() => { const t = asphaltTex.clone(); t.needsUpdate = true; t.repeat.set(1, 1); return t; })(), roughness: 0.92 });
+const kerbStripeMat = new THREE.MeshStandardMaterial({ map: (() => { const t = canvasTex(64, 16, (c) => { c.fillStyle = '#f2c200'; c.fillRect(0, 0, 32, 16); c.fillStyle = '#141414'; c.fillRect(32, 0, 32, 16); }); return t; })(), roughness: 0.7 });
+function ribbon(r, off, width, y, uLen, mat) { // strip along a road polyline, offset sideways
+  const pos = [], uv = [], idx = [];
+  r.P.forEach((p, i) => {
+    const a = r.P[Math.max(0, i - 1)], b = r.P[Math.min(r.P.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
+    const nx = -tz, nz = tx;
+    for (const side of [-1, 1]) { const o = off + side * width / 2; pos.push(p.x + nx * o, y, p.z + nz * o); uv.push(r.cum[i] / uLen, side < 0 ? 0 : 1); }
+    if (i) { const k = i * 2; idx.push(k - 2, k, k - 1, k - 1, k, k + 1); }
+  });
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals();
+  const m = new THREE.Mesh(g, mat); m.receiveShadow = true; scene.add(m); return m;
+}
+for (const r of roads) {
+  ribbon(r, 0, r.w, 0.03 + r.w * 0.0005, 8, roadSurfaceMat);
+  for (const side of [-1, 1]) ribbon(r, side * (r.w / 2 + 0.2), 0.4, 0.06 + r.w * 0.0005, 2, kerbStripeMat);
+}
+for (const r of roads) for (const [p] of [[r.P[0]], [r.P[r.P.length - 1]]]) { const j = new THREE.Mesh(new THREE.CircleGeometry(r.w / 2 + 0.6, 20), roadSurfaceMat); j.rotation.x = -Math.PI / 2; j.position.set(p.x, 0.035 + r.w * 0.0005, p.z); scene.add(j); }
+const ground = land; // the paved land mass (night puddles go on the roads instead)
+
+// little boats bobbing in the harbour off the Gateway
+const GATEWAY_BOATS = geoToGame(18.9220, 72.8347);
+const boats = [];
+for (let i = 0; i < 9; i++) { const b = new THREE.Group(); const hull = new THREE.Mesh(new THREE.BoxGeometry(3, 1, 8), M(i % 2 ? 0xe8e2d4 : 0x2f6f8f)); hull.position.y = 0.5; b.add(hull); const cab = new THREE.Mesh(new THREE.BoxGeometry(2, 1.2, 3), M(0xdddddd)); cab.position.set(0, 1.4, -1); b.add(cab); b.position.set(GATEWAY_BOATS.x + rand(-160, 160), 0, GATEWAY_BOATS.z - rand(40, 260)); b.rotation.y = rand(0, 6); b.traverse(o => o.castShadow = true); scene.add(b); boats.push(b); }
+
+// Gateway of India
+function gateway(x, z) {
+  const st = new THREE.MeshStandardMaterial({ map: stoneTex, bumpMap: stoneTex, bumpScale: 3, color: 0xf0dcb0, roughness: 0.9 });
+  stoneTex.repeat.set(2, 4);
+  addBox(8, 20, 10, st, x - 10, 0, z); addBox(8, 20, 10, st, x + 10, 0, z);
+  addBox(28, 6, 10, st, x, 20, z, { collide: false });
+  const arch = new THREE.Mesh(new THREE.TorusGeometry(6, 1.3, 12, 32, Math.PI), st); arch.position.set(x, 14, z); arch.castShadow = true; scene.add(arch);
+  for (const dx of [-12, -4, 4, 12]) { const t = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.6, 4, 12), st); t.position.set(x + dx, 28, z); t.castShadow = true; scene.add(t);
+    const d = new THREE.Mesh(new THREE.SphereGeometry(1.6, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), st); d.position.set(x + dx, 30, z); scene.add(d); }
+  addBox(30, 1, 14, st, x, 26, z, { collide: false });
+}
+{ const gw = geoToGame(18.9220, 72.8347); gateway(gw.x, gw.z); }
+
+// Taj Mahal Palace (heritage wing) — exterior
+const TAJ = { x: -40, z: -100 };
+const texLoader = new THREE.TextureLoader();
+function photoTex(url, rx = 1, ry = 1) { const t = texLoader.load(url); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); t.anisotropy = 8; return t; }
+// brick with cream bands + arched windows (for towers & side faces), lit windows at night
+const brickBand = canvasTex(512, 512, (c, w, h) => {
+  grain(c, w, h, '#8e4a32', 0.1, 12000);
+  c.strokeStyle = 'rgba(40,20,10,.35)'; for (let y = 0; y < h; y += 8) { c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); }
+  for (let y = 0; y < h; y += 64) { c.fillStyle = '#efe2c4'; c.fillRect(0, y, w, 9); }
+  for (let y = 0; y < h; y += 128) for (let x = 16; x < w; x += 64) { c.fillStyle = '#efe2c4'; c.beginPath(); c.moveTo(x - 4, y + 110); c.lineTo(x - 4, y + 46); c.arc(x + 16, y + 46, 20, Math.PI, 0); c.lineTo(x + 36, y + 110); c.fill(); c.fillStyle = '#2a2a33'; c.beginPath(); c.moveTo(x, y + 108); c.lineTo(x, y + 48); c.arc(x + 16, y + 48, 16, Math.PI, 0); c.lineTo(x + 32, y + 108); c.fill(); }
+});
+const ribTex = canvasTex(512, 256, (c, w, h) => { const g = c.createLinearGradient(0, 0, 32, 0); g.addColorStop(0, '#7a1f1c'); g.addColorStop(0.5, '#c0433a'); g.addColorStop(1, '#7a1f1c'); c.fillStyle = g; for (let x = 0; x < w; x += 32) { c.save(); c.translate(x, 0); c.fillRect(0, 0, 32, h); c.restore(); } }, [1, 1]);
+const roofTileTex = canvasTex(256, 256, (c, w, h) => { grain(c, w, h, '#9a3a26', 0.1); c.strokeStyle = 'rgba(50,15,5,.5)'; for (let y = 0; y < h; y += 16) { c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); for (let x = (y / 16 % 2) * 8; x < w; x += 16) { c.beginPath(); c.moveTo(x, y); c.lineTo(x, y + 16); c.stroke(); } } }, [12, 3]);
+function tajHotel() {
+  const L = 96, D = 34, H = 26.5;
+  const front = photoTex('assets/taj_front.jpg'), side = photoTex('assets/taj_side.jpg', 1, 1);
+  const em = new THREE.MeshStandardMaterial({ map: front, roughness: 0.8, emissiveMap: front, emissive: 0xffffff, emissiveIntensity: 0.0 });
+  const sm = new THREE.MeshStandardMaterial({ map: side, roughness: 0.8, emissiveMap: side, emissive: 0xffffff, emissiveIntensity: 0.0 });
+  windowMats.push(em, sm); em.userData.nightGlow = sm.userData.nightGlow = 0.08;
+  const roofM = new THREE.MeshStandardMaterial({ map: roofTileTex, roughness: 0.7 });
+  const main = new THREE.Mesh(new THREE.BoxGeometry(L, H, D), [sm, sm, roofM, roofM, em, em]);
+  main.position.set(TAJ.x, H / 2, TAJ.z); main.castShadow = main.receiveShadow = true; scene.add(main);
+  colliders.push({ minX: TAJ.x - L / 2, maxX: TAJ.x + L / 2, minZ: TAJ.z - D / 2, maxZ: TAJ.z + D / 2, minY: 0, maxY: H }); solids.push(main);
+  // hipped red-tile roof
+  const roofShape = new THREE.Shape([new THREE.Vector2(-D / 2, 0), new THREE.Vector2(D / 2, 0), new THREE.Vector2(0, 7)]);
+  const roof = new THREE.Mesh(new THREE.ExtrudeGeometry(roofShape, { depth: L - 6, bevelEnabled: false }), roofM);
+  roof.rotation.y = Math.PI / 2; roof.position.set(TAJ.x - (L - 6) / 2, H, TAJ.z); roof.castShadow = true; scene.add(roof);
+  // gables / dormers with pointed red roofs along both long faces
+  const cream = M(0xf0e4c8, { roughness: 0.6 });
+  for (const sz of [1, -1]) for (let i = 0; i < 14; i++) {
+    const x = TAJ.x - L / 2 + 8 + i * 6.2; if (Math.abs(x - TAJ.x) < 8) continue;
+    const gab = new THREE.Mesh(new THREE.BoxGeometry(3.2, 3, 1.4), new THREE.MeshStandardMaterial({ map: brickBand, roughness: 0.8 })); gab.position.set(x, H + 1.5, TAJ.z + sz * (D / 2 - 0.5)); scene.add(gab);
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(2.4, 2.6, 4), roofM); cap.rotation.y = Math.PI / 4; cap.position.set(x, H + 4.3, TAJ.z + sz * (D / 2 - 0.5)); cap.castShadow = true; scene.add(cap);
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.12, 1.4, 6), cream); spike.position.set(x, H + 6.2, TAJ.z + sz * (D / 2 - 0.5)); scene.add(spike);
+  }
+  // red ribbed dome helper (onion-ish)
+  const gold = M(0xd4a23c, { metalness: 0.85, roughness: 0.25 });
+  function dome(x, y, z, r, tall = 1.25) {
+    const g = new THREE.Group();
+    const pts = []; for (let i = 0; i <= 24; i++) { const a = i / 24 * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r * (1 + 0.08 * Math.sin(a * 2)), Math.sin(a) * r * tall)); }
+    const d = new THREE.Mesh(new THREE.LatheGeometry(pts, 40), new THREE.MeshStandardMaterial({ map: ribTex, bumpMap: ribTex, bumpScale: 4, roughness: 0.45, metalness: 0.1 })); d.castShadow = true; g.add(d);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 1.02, r * 0.06, 8, 40), cream); ring.rotation.x = Math.PI / 2; g.add(ring);
+    const fin = new THREE.Mesh(new THREE.ConeGeometry(r * 0.08, r * 0.9, 10), gold); fin.position.y = r * tall + r * 0.4; g.add(fin);
+    g.position.set(x, y, z); scene.add(g); return g;
+  }
+  // central tower + great dome with lantern and four satellite domes
+  const towerM = new THREE.MeshStandardMaterial({ map: brickBand, roughness: 0.8 });
+  const ct = new THREE.Mesh(new THREE.BoxGeometry(16, 12, 14), towerM); ct.position.set(TAJ.x, H + 6, TAJ.z); ct.castShadow = true; scene.add(ct);
+  const drum = new THREE.Mesh(new THREE.CylinderGeometry(7, 7.4, 5, 40), towerM); drum.position.set(TAJ.x, H + 14.5, TAJ.z); scene.add(drum);
+  dome(TAJ.x, H + 17, TAJ.z, 7.6, 1.15);
+  const lantern = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 3, 12), cream); lantern.position.set(TAJ.x, H + 27.5, TAJ.z); scene.add(lantern);
+  dome(TAJ.x, H + 29, TAJ.z, 1.6, 1.2);
+  for (const [dx, dz] of [[-7, -6], [7, -6], [-7, 6], [7, 6]]) { const p = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 3, 12), cream); p.position.set(TAJ.x + dx, H + 13.5, TAJ.z + dz); scene.add(p); dome(TAJ.x + dx, H + 15, TAJ.z + dz, 1.6, 1.3); }
+  // round corner towers with ribbed domes
+  for (const [dx, dz] of [[-L / 2, -D / 2], [L / 2, -D / 2], [-L / 2, D / 2], [L / 2, D / 2]]) {
+    const t = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.6, H + 5, 32), new THREE.MeshStandardMaterial({ map: brickBand, roughness: 0.8 })); t.position.set(TAJ.x + dx, (H + 5) / 2, TAJ.z + dz); t.castShadow = true; scene.add(t);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 1, 32), cream); band.position.set(TAJ.x + dx, H + 5, TAJ.z + dz); scene.add(band);
+    dome(TAJ.x + dx, H + 5.5, TAJ.z + dz, 4.4, 1.15);
+  }
+  // arcaded porch on the city side
+  for (let i = -3; i <= 3; i++) { const col = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 5, 12), cream); col.position.set(TAJ.x + i * 3, 2.5, TAJ.z + D / 2 + 5); col.castShadow = true; scene.add(col); }
+  addBox(22, 0.8, 7, cream, TAJ.x, 5, TAJ.z + D / 2 + 3, { collide: false });
+  const door = new THREE.Mesh(new THREE.PlaneGeometry(7, 4.5), new THREE.MeshStandardMaterial({ color: 0x110a05, emissive: 0xffa040, emissiveIntensity: 0.6 }));
+  door.position.set(TAJ.x, 2.25, TAJ.z + D / 2 + 0.05); scene.add(door);
+  // Taj Mahal Tower (1973 wing) with its crown
+  const tw = photoTex('assets/taj_tower.jpg');
+  const twM = new THREE.MeshStandardMaterial({ map: tw, roughness: 0.75, emissiveMap: tw, emissive: 0xffffff, emissiveIntensity: 0 }); windowMats.push(twM); twM.userData.nightGlow = 0.12;
+  const twS = new THREE.MeshStandardMaterial({ map: brickBand, color: 0xb89a80, roughness: 0.85 });
+  const tower = new THREE.Mesh(new THREE.BoxGeometry(30, 78, 22), [twS, twS, M(0x8a7a6a), M(0x8a7a6a), twM, twM]);
+  tower.position.set(TAJ.x + 78, 39, TAJ.z + 4); tower.castShadow = tower.receiveShadow = true; scene.add(tower);
+  colliders.push({ minX: TAJ.x + 63, maxX: TAJ.x + 93, minZ: TAJ.z - 7, maxZ: TAJ.z + 15, minY: 0, maxY: 78 }); solids.push(tower);
+  const crown = new THREE.Mesh(new THREE.BoxGeometry(33, 6, 25), cream); crown.position.set(TAJ.x + 78, 81, TAJ.z + 4); crown.castShadow = true; scene.add(crown);
+  for (let i = 0; i < 12; i++) { const pin = new THREE.Mesh(new THREE.ConeGeometry(0.35, 2, 6), cream); pin.position.set(TAJ.x + 63 + i * 2.7, 85, TAJ.z - 8.5); scene.add(pin); const pin2 = pin.clone(); pin2.position.z = TAJ.z + 16.5; scene.add(pin2); }
+  addBox(40, 6, 8, cream, TAJ.x + 78, 0, TAJ.z + 19, { collide: false }); // tower porch arcade
+  return { main };
+}
+const taj = tajHotel();
+
+
+// Smoke/fire on the Taj (only after the alert)
+const fireGroup = new THREE.Group(); fireGroup.visible = false; scene.add(fireGroup);
+const smokeTex = canvasTex(128, 128, (c, w, h) => { const g = c.createRadialGradient(64, 64, 0, 64, 64, 64); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)'); c.fillStyle = g; c.fillRect(0, 0, w, h); });
+const smoke = [];
+function emitter(group, x, y, z, n, fire) {
+  for (let i = 0; i < n; i++) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTex, color: fire ? 0xff7a20 : 0x222222, transparent: true, opacity: 0, depthWrite: false, blending: fire ? THREE.AdditiveBlending : THREE.NormalBlending }));
+    s.userData = { o: new THREE.Vector3(x, y, z), t: Math.random(), fire, life: fire ? 1.2 : 6 };
+    group.add(s); smoke.push(s);
+  }
+}
+emitter(fireGroup, TAJ.x, 46, TAJ.z, 40, false); emitter(fireGroup, TAJ.x, 36, TAJ.z, 20, true);
+emitter(fireGroup, TAJ.x - 30, 22, TAJ.z + 17, 25, false); emitter(fireGroup, TAJ.x - 30, 20, TAJ.z + 17.5, 12, true);
+const tajFireLight = new THREE.PointLight(0xff6a20, 0, 120, 1.6); tajFireLight.position.set(TAJ.x, 40, TAJ.z + 10); scene.add(tajFireLight);
+
+// City blocks of Colaba
+const blockMats = [
+  facade({ floors: 5, cols: 6, wall: '#c9b79c', lit: 0.4 }), facade({ floors: 7, cols: 8, wall: '#a99a86', lit: 0.4 }),
+  facade({ floors: 4, cols: 5, wall: '#d8c8a6', lit: 0.5, arched: true }), facade({ floors: 9, cols: 7, wall: '#8e8a84', lit: 0.35 }),
+  facade({ floors: 6, cols: 6, wall: '#b88f6e', lit: 0.45 }), facade({ floors: 5, cols: 7, wall: '#e4dccb', lit: 0.45, arched: true }),
+];
+const SPOTS = { handler: new THREE.Vector3(85, 0, 40), home: new THREE.Vector3(-110, 0, 95), red: new THREE.Vector3(TAJ.x, 0, TAJ.z + 26), spawn: new THREE.Vector3(10, 0, 150) };
+// ---- vehicles built from real side profiles (extruded + bevelled), not boxes
+function profileMesh(pts, width, mat, bevel = 0.06) {
+  const shape = new THREE.Shape(pts.map(([z, y]) => new THREE.Vector2(z, y)));
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: width - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 3, curveSegments: 8 });
+  geo.translate(0, 0, -(width - bevel * 2) / 2);
+  const m = new THREE.Mesh(geo, mat); m.rotation.y = -Math.PI / 2; m.castShadow = true; return m;
+}
+const chrome = new THREE.MeshStandardMaterial({ color: 0xdadde0, metalness: 1, roughness: 0.18 });
+const tyreM = M(0x141414, { roughness: 0.9 }), rimM = new THREE.MeshStandardMaterial({ color: 0xb8bcc0, metalness: 0.9, roughness: 0.3 });
+const glassM = new THREE.MeshPhysicalMaterial({ color: 0x0d141c, roughness: 0.04, metalness: 0.2, clearcoat: 1, envMapIntensity: 1.4 });
+const headM = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff2d0, emissiveIntensity: 2.5 });
+const tailM = new THREE.MeshStandardMaterial({ color: 0x550000, emissive: 0xff1010, emissiveIntensity: 1.6 });
+function wheel(g, x, z, r = 0.33, w = 0.22) {
+  const t = new THREE.Mesh(new THREE.CylinderGeometry(r, r, w, 20), tyreM); t.rotation.z = Math.PI / 2; t.position.set(x, r, z); t.castShadow = true; g.add(t);
+  const rim = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.6, r * 0.6, w + 0.02, 16), rimM); rim.rotation.z = Math.PI / 2; rim.position.set(x, r, z); g.add(rim);
+}
+function car(x, z, ry, taxi) {
+  const g = new THREE.Group();
+  const col = taxi ? 0x0c0c0c : [0xa81e1e, 0xe4e4e0, 0x1f3f7a, 0x6a6e72, 0x2a5a3a][Math.floor(rand(0, 5))];
+  const paint = new THREE.MeshPhysicalMaterial({ color: col, metalness: 0.5, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.08 });
+  // Premier Padmini-style sedan: lower body, cabin, glasshouse
+  const body = profileMesh([[-2.05, 0.38], [2.05, 0.38], [2.12, 0.62], [2.05, 0.82], [1.25, 0.93], [0.72, 0.98], [-1.35, 0.98], [-2.08, 0.9], [-2.12, 0.6]], 1.66, paint, 0.08);
+  g.add(body);
+  const cabinM = taxi ? new THREE.MeshPhysicalMaterial({ color: 0xf2c400, roughness: 0.35, clearcoat: 1 }) : paint;
+  const roof = profileMesh([[0.7, 0.98], [0.22, 1.42], [-0.92, 1.45], [-1.32, 0.98]], 1.48, cabinM, 0.05); g.add(roof);
+  const glass = profileMesh([[0.74, 1.0], [0.26, 1.38], [-0.94, 1.4], [-1.36, 1.0]], 1.54, glassM, 0.02); g.add(glass);
+  for (const zz of [2.17, -2.17]) { const b = new THREE.Mesh(new THREE.BoxGeometry(1.78, 0.14, 0.12), chrome); b.position.set(0, 0.5, zz); g.add(b); }
+  const grille = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.22), M(0x0a0a0a, { metalness: 0.6 })); grille.position.set(0, 0.72, 2.155); g.add(grille);
+  for (const sx of [-0.62, 0.62]) {
+    const h = new THREE.Mesh(new THREE.CircleGeometry(0.12, 16), headM); h.position.set(sx, 0.72, 2.16); g.add(h);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.025, 6, 16), chrome); ring.position.copy(h.position); g.add(ring);
+    const tl = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.14), tailM); tl.position.set(sx, 0.76, -2.155); tl.rotation.y = Math.PI; g.add(tl);
+  }
+  const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.12), M(taxi ? 0xf2c400 : 0xf4f4f0)); plate.position.set(0, 0.5, 2.24); g.add(plate);
+  for (const [wx, wz] of [[-0.78, 1.32], [0.78, 1.32], [-0.78, -1.3], [0.78, -1.3]]) wheel(g, wx, wz);
+  const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.06), chrome); mirror.position.set(0.86, 1.05, 0.6); g.add(mirror);
+  g.position.set(x, 0, z); g.rotation.y = ry; scene.add(g);
+  colliders.push({ minX: x - 2.2, maxX: x + 2.2, minZ: z - 2.2, maxZ: z + 2.2, minY: 0, maxY: 1.5 }); solids.push(body);
+  return g;
+}
+function autoRickshaw(x, z, ry) {
+  const g = new THREE.Group();
+  const black = new THREE.MeshPhysicalMaterial({ color: 0x0e0e0e, roughness: 0.35, clearcoat: 0.8 });
+  const yellow = new THREE.MeshPhysicalMaterial({ color: 0xf2c200, roughness: 0.45, clearcoat: 0.4, side: THREE.DoubleSide });
+  // tapered nose + floor pan
+  g.add(profileMesh([[-1.15, 0.32], [0.95, 0.32], [1.42, 0.55], [1.38, 1.25], [1.1, 1.3], [0.9, 0.75], [-1.15, 0.72]], 1.3, black, 0.06));
+  const nose = profileMesh([[0.95, 0.32], [1.42, 0.55], [1.38, 1.25], [1.1, 1.3], [0.9, 0.75]], 0.9, black, 0.04); g.add(nose);
+  // curved canvas canopy (thin shell, open sides like a real auto)
+  const outer = [], inner = [];
+  for (let i = 0; i <= 16; i++) { const t = i / 16, zz = -1.22 + t * 2.55, yy = 1.05 + Math.sin(Math.min(1, t * 1.25) * Math.PI / 2) * 0.95 - Math.max(0, t - 0.8) * 2.6; outer.push([zz, yy]); inner.push([zz, yy - 0.06]); }
+  g.add(profileMesh([...outer, ...inner.reverse()], 1.4, yellow, 0.02));
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.62), new THREE.MeshPhysicalMaterial({ color: 0x223040, roughness: 0.05, transparent: true, opacity: 0.5 })); screen.position.set(0, 1.62, 1.08); screen.rotation.x = -0.25; g.add(screen);
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.35, 0.6), M(0x1a1a1a)); seat.position.set(0, 0.95, -0.7); g.add(seat);
+  const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.7, 6), chrome); bar.rotation.z = Math.PI / 2; bar.position.set(0, 1.3, 0.85); g.add(bar);
+  wheel(g, 0, 1.2, 0.25, 0.16); wheel(g, -0.62, -0.75, 0.25, 0.16); wheel(g, 0.62, -0.75, 0.25, 0.16);
+  const hl = new THREE.Mesh(new THREE.CircleGeometry(0.11, 14), headM); hl.position.set(0, 1.05, 1.43); hl.rotation.x = -0.4; g.add(hl);
+  g.position.set(x, 0, z); g.rotation.y = ry; scene.add(g); return g;
+}
+function bestBus(x, z, ry) {
+  const g = new THREE.Group();
+  const red = new THREE.MeshPhysicalMaterial({ color: 0xb3121c, roughness: 0.4, clearcoat: 0.6 });
+  const body = new THREE.Mesh(new RoundedBoxGeometry(2.5, 2.9, 11, 4, 0.25), red); body.position.y = 1.85; body.castShadow = true; g.add(body);
+  const win = new THREE.Mesh(new RoundedBoxGeometry(2.54, 0.95, 9.6, 2, 0.08), new THREE.MeshStandardMaterial({ color: 0x141c26, emissive: 0xffe8b0, emissiveIntensity: 0.25, roughness: 0.1 })); win.position.set(0, 2.45, -0.4); g.add(win); windowMats.push(win.material); win.material.userData.nightGlow = 0.8;
+  const front = new THREE.Mesh(new THREE.PlaneGeometry(2.1, 1.3), glassM); front.position.set(0, 2.35, 5.51); g.add(front);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.52, 0.12, 10.9), M(0xf2e8d0)); stripe.position.y = 1.7; g.add(stripe);
+  const roof = new THREE.Mesh(new RoundedBoxGeometry(2.3, 0.2, 10.4, 2, 0.08), M(0xe8e4dc)); roof.position.y = 3.35; g.add(roof);
+  for (const sx of [-0.8, 0.8]) { const h = new THREE.Mesh(new THREE.CircleGeometry(0.16, 14), headM); h.position.set(sx, 0.9, 5.52); g.add(h); }
+  for (const [wx, wz] of [[-1.15, 3.6], [1.15, 3.6], [-1.15, -3.4], [1.15, -3.4]]) wheel(g, wx, wz, 0.5, 0.32);
+  g.position.set(x, 0, z); g.rotation.y = ry; scene.add(g); return g;
+}
+
+// ============================================================ MUMBAI STREET LIFE (dense details, cheap to render)
+const ROADS_Z = [-15, 35, 85, 135, 185, 235], ROADS_X = [-225, -175, -125, -75, -25, 25, 75, 125, 175, 225];
+const SHOP_NAMES = ['Shree Ganesh Vada Pav', 'Colaba Chai Point', 'Laxmi Jewellers', 'Sai Medical Stores', 'Irani Bakery & Cafe', 'Bombay Mobile Centre', 'Mahalaxmi Sweets', 'Patel Kirana Store', 'Royal Tailors', 'Apollo Electricals', 'Saraswati Saree Centre', 'Hotel Annapurna', 'New Krishna Bhavan', 'Star Xerox & Print', 'Gokul Pan House', 'Om Sai Hardware', 'Jai Hind Lunch Home', 'Bharat Book Depot', 'Mumbai Masala Dosa', 'Lucky Restaurant'];
+const SIGN_COLORS = [['#c8102e', '#ffffff'], ['#f5c400', '#1a1a1a'], ['#0b6e3a', '#ffe680'], ['#1b3f8f', '#ffffff'], ['#ff7a00', '#ffffff'], ['#6a1b9a', '#ffe0ff'], ['#ffffff', '#c8102e'], ['#00897b', '#ffffff']];
+const signMats = SHOP_NAMES.map((name, i) => {
+  const [bg, fg] = SIGN_COLORS[i % SIGN_COLORS.length];
+  const t = canvasTex(512, 96, (c, w, h) => {
+    c.fillStyle = bg; c.fillRect(0, 0, w, h); c.strokeStyle = fg; c.lineWidth = 4; c.strokeRect(6, 6, w - 12, h - 12);
+    c.fillStyle = fg; c.font = `700 ${name.length > 18 ? 34 : 42}px Oswald, Arial, sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(name.toUpperCase(), w / 2, h / 2 + 2);
+  });
+  const m = new THREE.MeshStandardMaterial({ map: t, emissiveMap: t, emissive: 0xffffff, emissiveIntensity: 0.05, roughness: 0.6 }); m.userData.nightGlow = 0.9; windowMats.push(m); return m;
+});
+const shutterTex = canvasTex(256, 128, (c, w, h) => { c.fillStyle = '#7a7f84'; c.fillRect(0, 0, w, h); c.strokeStyle = '#5a5f64'; c.lineWidth = 2; for (let y = 0; y < h; y += 6) { c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); } });
+const shopInside = canvasTex(256, 128, (c, w, h) => { c.fillStyle = '#ffe9b8'; c.fillRect(0, 0, w, h); for (let i = 0; i < 40; i++) { c.fillStyle = ['#c84', '#48c', '#c44', '#4a4', '#fc4'][i % 5]; c.fillRect(rand(0, w), rand(10, h * 0.8), rand(8, 20), rand(8, 24)); } c.fillStyle = '#6a4a2a'; c.fillRect(0, h * 0.75, w, h * 0.25); });
+const mShutter = new THREE.MeshStandardMaterial({ map: shutterTex, roughness: 0.6, metalness: 0.4 });
+const mShop = new THREE.MeshStandardMaterial({ map: shopInside, emissiveMap: shopInside, emissive: 0xffffff, emissiveIntensity: 0.15 }); mShop.userData.nightGlow = 0.8; windowMats.push(mShop);
+let signIdx = 0;
+function shopFront(x, z, w, faceDir, alongX = true) { // faceDir: +1/-1 toward the road
+  const n = Math.max(1, Math.floor(w / 6));
+  for (let i = 0; i < n; i++) {
+    const off = -w / 2 + (i + 0.5) * (w / n);
+    const px = alongX ? x + off : x, pz = alongX ? z : z + off;
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(w / n - 0.4, 1.1), signMats[signIdx++ % signMats.length]);
+    const front = new THREE.Mesh(new THREE.PlaneGeometry(w / n - 0.6, 2.8), Math.random() < 0.65 ? mShop : mShutter);
+    for (const [m, y] of [[sign, 4.3], [front, 1.65]]) { m.position.set(px + (alongX ? 0 : faceDir * 0.06), y, pz + (alongX ? faceDir * 0.06 : 0)); m.rotation.y = alongX ? (faceDir > 0 ? 0 : Math.PI) : (faceDir > 0 ? Math.PI / 2 : -Math.PI / 2); scene.add(m); }
+  }
+}
+// pastel Mumbai buildings with balconies (pink, mint, sky, lemon, peach…)
+const pastel = ['#e8a6b8', '#a8d8c0', '#9cc4e4', '#f0dc8c', '#f4b890', '#c8b4e0', '#e0e0d0', '#b0c890'];
+const pastelMats = pastel.map(wall => facade({ floors: 7, cols: 6, wall, glass: '#2a3440', lit: 0.45, trim: '#f8f4ea' }));
+const balconyMat = M(0xf2efe6, { roughness: 0.7 });
+const balconyGeo = new THREE.BoxGeometry(2.6, 0.9, 1.1);
+const balconies = new THREE.InstancedMesh(balconyGeo, balconyMat, 3000); balconies.count = 0; balconies.castShadow = true; scene.add(balconies);
+const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(1, 1, 1), _p = new THREE.Vector3();
+function addInst(im, x, y, z, ry = 0, sx = 1, sy = 1, sz = 1) { if (im.count >= im.instanceMatrix.count) return; _q.setFromEuler(new THREE.Euler(0, ry, 0)); _m4.compose(_p.set(x, y, z), _q, _s.set(sx, sy, sz)); im.setMatrixAt(im.count++, _m4); }
+function dressBuilding(cx, cz, w, h, d) {
+  const floors = Math.floor((h - 5) / 3.4);
+  for (const dir of [1, -1]) for (let f = 0; f < floors; f++) for (let i = 0; i < Math.floor(w / 5); i++) if (Math.random() < 0.55) addInst(balconies, cx - w / 2 + 2.5 + i * 5, 6 + f * 3.4, cz + dir * (d / 2 + 0.5));
+}
+// kerbs with yellow/black stripes, like Indian city roads
+const kerbTex = canvasTex(256, 32, (c, w, h) => { for (let x = 0; x < w; x += 32) { c.fillStyle = (x / 32) % 2 ? '#141414' : '#f2c200'; c.fillRect(x, 0, 32, h); } }, [1, 1]);
+const kerbMat = new THREE.MeshStandardMaterial({ map: kerbTex, roughness: 0.7 });
+function kerb(x, z, len, alongX) { const t = kerbTex.clone(); t.needsUpdate = true; t.repeat.set(len / 2, 1); const m = new THREE.Mesh(new THREE.BoxGeometry(alongX ? len : 0.35, 0.35, alongX ? 0.35 : len), new THREE.MeshStandardMaterial({ map: t, roughness: 0.7 })); m.position.set(x, 0.17, z); m.receiveShadow = true; scene.add(m); }
+// lane markings & zebra crossings (instanced)
+const paint = new THREE.MeshStandardMaterial({ color: 0xe8e8e0, roughness: 0.6 });
+const dashes = new THREE.InstancedMesh(new THREE.PlaneGeometry(3, 0.18), paint, 2500); dashes.count = 0; dashes.receiveShadow = true; scene.add(dashes);
+const zebra = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.6, 4), paint, 2500); zebra.count = 0; scene.add(zebra);
+function flatInst(im, x, z, ry) { _q.setFromEuler(new THREE.Euler(-Math.PI / 2, 0, ry)); _m4.compose(_p.set(x, 0.03, z), _q, _s.set(1, 1, 1)); if (im.count < im.instanceMatrix.count) im.setMatrixAt(im.count++, _m4); }
+// trees (instanced trunks + foliage clumps)
+const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.18, 0.28, 4, 7), M(0x5a4030), 400); trunks.count = 0; trunks.castShadow = true; scene.add(trunks);
+const leaves = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.6, 1), new THREE.MeshStandardMaterial({ color: 0x3f7a2e, roughness: 0.9, flatShading: true }), 1600); leaves.count = 0; leaves.castShadow = true; scene.add(leaves);
+function tree(x, z) { addInst(trunks, x, 2, z); for (let i = 0; i < 4; i++) addInst(leaves, x + rand(-1.2, 1.2), rand(4, 5.6), z + rand(-1.2, 1.2), rand(0, 6), rand(0.8, 1.3), rand(0.7, 1), rand(0.8, 1.3)); }
+// bollards
+const bollards = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.14, 0.14, 0.9, 8), new THREE.MeshStandardMaterial({ map: canvasTex(32, 64, (c) => { for (let y = 0; y < 64; y += 16) { c.fillStyle = (y / 16) % 2 ? '#111' : '#f2c200'; c.fillRect(0, y, 32, 16); } }), roughness: 0.6 }), 800); bollards.count = 0; scene.add(bollards);
+// street lamps along every road (few real lights — glow comes from bloom)
+const bulbMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffb45a, emissiveIntensity: 4 });
+const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.1, 0.14, 8, 6), M(0x4a4a4a, { metalness: 0.6 }), 700); poles.count = 0; scene.add(poles);
+const bulbs = new THREE.InstancedMesh(new THREE.SphereGeometry(0.32, 10, 8), bulbMat, 700); bulbs.count = 0; scene.add(bulbs);
+let lampCount = 0;
+function lamp(x, z) { addInst(poles, x, 4, z); addInst(bulbs, x, 8.1, z); if ((lampCount++ % 14) === 0 && cityLights.length < 10) { const l = new THREE.PointLight(0xffa850, 30, 40, 1.8); l.position.set(x, 7.8, z); l.visible = false; scene.add(l); cityLights.push(l); } }
+// Mumbai auto-rickshaws (black & yellow) and red BEST buses
+
+// ---- Colaba landmarks (approximate, from local knowledge; replaced by OpenStreetMap data when available)
+const ROAD_NAMES_Z = ['P. J. Ramchandani Marg (Apollo Bunder)', 'Mereweather Road', 'Shahid Bhagat Singh Rd', 'Best Marg', 'Nathalal Parekh Marg', 'Wodehouse Road'];
+const ROAD_NAMES_X = ['Arthur Bunder Rd', 'Ormiston Road', 'Colaba Causeway', 'Battery Street', 'Henry Road', 'Allana Road', 'Garden Road', 'Strand Road', 'Navy Nagar Rd', 'Cuffe Parade'];
+function roadSign(text, x, z, ry) {
+  const t = canvasTex(512, 128, (c, w, h) => { c.fillStyle = '#0b5d2a'; c.fillRect(0, 0, w, h); c.strokeStyle = '#fff'; c.lineWidth = 6; c.strokeRect(8, 8, w - 16, h - 16); c.fillStyle = '#fff'; c.font = `600 ${text.length > 24 ? 30 : 40}px Oswald, Arial`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(text, w / 2, h / 2); });
+  const g = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 3.2, 6), M(0x444444)); pole.position.y = 1.6; g.add(pole);
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.65), new THREE.MeshStandardMaterial({ map: t, side: THREE.DoubleSide, roughness: 0.5 })); board.position.y = 3.3; g.add(board);
+  g.position.set(x, 0, z); g.rotation.y = ry; scene.add(g);
+}
+// Colaba Causeway market: hawker stalls with tarpaulin canopies along both pavements
+const tarp = [0x1f5fa8, 0xd0402a, 0x2a8a4a, 0xe0a020, 0x6a3a9a].map(c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.9, side: THREE.DoubleSide }));
+const goods = [0xd8506a, 0xf0c040, 0x40a0d0, 0xf4f0e0, 0x80c050, 0xc06030];
+const roadMat = new THREE.MeshStandardMaterial({ map: pavTex, roughness: 0.85 });
+// ============================================================ REAL SOUTH-MUMBAI LANDMARKS (positions from real lat/long, relative to the Taj)
+// game frame: Taj at (TAJ.x, TAJ.z); the harbour (real south-east) is game -Z, real north-east is game +X
 const LANDMARKS = [
   { name: 'Leopold Cafe', lat: 18.9227, lon: 72.8317, r: 8, kind: 'leopold' },
   { name: 'Regal Circle', lat: 18.9266, lon: 72.8320, r: 40, kind: 'regal' },
@@ -1007,7 +1361,7 @@ function collide(pos, r) {
     if (c.obb) {
       if (pos.x < c.minX - r || pos.x > c.maxX + r || pos.z < c.minZ - r || pos.z > c.maxZ + r) continue;
       const dx0 = pos.x - c.cx, dz0 = pos.z - c.cz, lx = dx0 * c.cos + dz0 * c.sin, lz = -dx0 * c.sin + dz0 * c.cos;
-      let px = clamp(lx, -c.hw, c.hw), pz = clamp(lz, -c.hd, c.hd), ex = lx - px, ez = lz - pz, e2 = ex * ex + ez * ez;
+      const px = clamp(lx, -c.hw, c.hw), pz = clamp(lz, -c.hd, c.hd), ex = lx - px, ez = lz - pz, e2 = ex * ex + ez * ez;
       if (e2 >= r * r) continue;
       let nx, nz;
       if (e2 > 1e-8) { const e = Math.sqrt(e2); nx = px + ex / e * r; nz = pz + ez / e * r; }
