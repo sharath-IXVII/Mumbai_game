@@ -741,7 +741,7 @@ furn.pole.filter(([x, z]) => Math.hypot(x - TAJ.x, z - TAJ.z) < 230).slice(0, 8)
 // green street-name boards
 for (const r of roads) for (const s of [Math.min(25, r.len / 3), r.len / 2]) { const p = roadPoint(r, s), o = r.w / 2 + 1.0; roadSign(r.name, p.x - p.tz * o, p.z + p.tx * o, Math.atan2(p.tx, p.tz)); }
 // Colaba Causeway market: hawker stalls along both pavements
-{ const r = roadByName('Colaba Causeway'); for (const side of [-1, 1]) for (let s = 180; s < Math.min(r.len, 1400); s += 4.4) { if (_R() < 0.22) continue; const p = roadPoint(r, s), o = side * (r.w / 2 + 2.1); const g = new THREE.Group();
+{ const r = roadByName('Colaba Causeway'); for (const side of [-1, 1]) for (let s = 180; s < Math.min(r.len, 1400); s += 4.4) { if (_R() < 0.22) continue; const p = roadPoint(r, s), o = side * (r.w / 2 + 4.0); const g = new THREE.Group();
   const table = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.9, 3.2), M(0x6a4a2a)); table.position.y = 0.45; g.add(table);
   for (let k = 0; k < 5; k++) { const it = new THREE.Mesh(new THREE.BoxGeometry(rr(0.2, 0.45), rr(0.1, 0.35), rr(0.2, 0.5)), M(goods[(k + Math.floor(s)) % goods.length])); it.position.set(rr(-0.6, 0.6), 1.0, rr(-1.3, 1.3)); g.add(it); }
   const canopy = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 3.8), tarp[Math.floor(s) % tarp.length]); canopy.rotation.x = -Math.PI / 2 + side * 0.2; canopy.position.y = 2.5; g.add(canopy);
@@ -756,7 +756,7 @@ for (const r of roads) for (const side of [-1, 1]) for (const row of [0, 1]) {
   while (s < r.len - 4) {
     const w = rr(10, 22), d = rr(12, 20), h = rr(11, 42);
     const p = roadPoint(r, s + w / 2), nx = -p.tz * side, nz = p.tx * side;
-    const off = r.w / 2 + 3 + d / 2 + row * (d + 4);
+    const off = r.w / 2 + 5.5 + d / 2 + row * (d + 4);
     const cx = p.x + nx * off, cz = p.z + nz * off, a = Math.atan2(p.tz, p.tx), rad = Math.hypot(w, d) / 2;
     const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => [cx + p.tx * u * w / 2 - p.tz * v * d / 2, cz + p.tz * u * w / 2 + p.tx * v * d / 2]);
     const inTaj = (x, z) => x > TAJ_ZONE.minX && x < TAJ_ZONE.maxX && z > TAJ_ZONE.minZ && z < TAJ_ZONE.maxZ;
@@ -1814,6 +1814,7 @@ function demoDirector(t) {
     else { me.pitch = 0.05; me.yaw = Math.PI * 1.5 + 0.3 + Math.sin(k) * 0.1; mouseDown = k > 9 && k < 11.5; if (k > 11.6 && k < 11.7 && me.inv.frag > 0) { me.inv.frag--; const d = new THREE.Vector3(0, 0.25, -1).applyQuaternion(camera.quaternion).normalize(); throwNade(camera.getWorldPosition(new THREE.Vector3()).addScaledVector(d, 0.6), d.multiplyScalar(14)); } }
   }
 }
+window.__dbg = () => ({ me: me.pos.toArray().map(v => +v.toFixed(1)), onLand: onLand(me.pos.x, me.pos.z), spawn: SPOTS.spawn.toArray().map(v => +v.toFixed(1)), cam: camera.position.toArray().map(v => +v.toFixed(1)), landVerts: land.geometry.attributes.position.count, landIdx: land.geometry.index ? land.geometry.index.count : -1, clearance: +roadClearance(me.pos.x, me.pos.z).toFixed(1) });
 window.__demoFrame = () => { demoT += 1 / 12; loop(); return demoT; };
 window.__demoStart = () => { $('quality').value = 'medium'; begin(false); };
 
@@ -1964,6 +1965,7 @@ function loop() {
   for (let i = feedLines.length - 1; i >= 0; i--) { feedLines[i].t -= dt; if (feedLines[i].t <= 0) feedLines.splice(i, 1); }
   $('feed').innerHTML = feedLines.map(l => `<div style="opacity:${Math.min(1, l.t / 2)}">${l.html}</div>`).join('');
   $('floor').textContent = inside ? FLOOR_NAMES[floorOf(me.pos.y)] : '';
+  if (location.hash === '#top') { camera.position.set(me.pos.x, 120, me.pos.z + 0.01); camera.lookAt(me.pos.x, 0, me.pos.z); }
   watchFps(dt);
   grade.uniforms.time.value = t % 100;
   composer.render();
