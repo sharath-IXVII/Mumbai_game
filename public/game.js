@@ -353,7 +353,7 @@ function ribbon(r, off, width, y, uLen, mat) { // strip along a road polyline, o
     const a = r.P[Math.max(0, i - 1)], b = r.P[Math.min(r.P.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
     const nx = -tz, nz = tx;
     for (const side of [-1, 1]) { const o = off + side * width / 2; pos.push(p.x + nx * o, y, p.z + nz * o); uv.push(r.cum[i] / uLen, side < 0 ? 0 : 1); }
-    if (i) { const k = i * 2; idx.push(k - 2, k, k - 1, k - 1, k, k + 1); }
+    if (i) { const k = i * 2; idx.push(k - 2, k - 1, k, k - 1, k + 1, k); } // counter-clockwise from above = faces up
   });
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals();
   const m = new THREE.Mesh(g, mat); m.receiveShadow = true; scene.add(m); return m;
